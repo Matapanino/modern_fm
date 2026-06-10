@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+# NOTE: build-backend switches to maturin in Phase 2 when the Rust backend lands.
+
+[project]
+name = "modern-fm"
+version = "0.1.0.dev0"
+description = "Fast, sklearn-compatible Factorization Machines and Field-aware Factorization Machines"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Masaya Kawamata" }]
+keywords = ["factorization-machines", "ffm", "ctr", "recommender", "tabular"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/modern_fm"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "NPY", "UP"]
