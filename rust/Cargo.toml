@@ -1,0 +1,21 @@
+[package]
+name = "modern-fm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Rust backend for the modern_fm Python package"
+license = "MIT"
+
+[lib]
+name = "_rust"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# extension-module is enabled by maturin (see pyproject [tool.maturin].features)
+# so that `cargo test` can still link against libpython.
+pyo3 = { version = "0.25", features = ["abi3-py310"] }
+numpy = "0.25"
+
+[profile.release]
+lto = true
+codegen-units = 1

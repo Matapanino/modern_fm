@@ -3,9 +3,9 @@
 Fast, sklearn-compatible Factorization Machines (FM) and Field-aware
 Factorization Machines (FFM) for Python.
 
-**Status: pre-alpha (v0.1 Phase 1).** Pure-NumPy reference implementations and
-the public API skeleton exist; the high-performance Rust backend lands in
-Phase 2. `fit` is not implemented yet.
+**Status: pre-alpha (v0.1 Phase 2A).** Pure-NumPy reference implementations,
+the public API skeleton, and a Rust prediction backend with full parity tests
+exist. Training (`fit`) lands in Phase 2B and is not implemented yet.
 
 ## Planned API
 
@@ -30,12 +30,29 @@ ffm.fit(X_train, y_train, field_ids=field_ids)
 
 ## Development
 
+Requires Python >= 3.10 and a recent Rust toolchain (1.74+; `rustup update`).
+
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e ".[dev]"   # builds the Rust extension via maturin
 .venv/bin/pytest -q
 .venv/bin/ruff check .
 ```
+
+`pip install -e .` compiles `rust/` and installs the extension as
+`modern_fm._rust` (maturin mixed layout, config in `pyproject.toml`).
+After editing Rust code, re-run `pip install -e .` to rebuild. Rust-only
+checks:
+
+```bash
+cd rust
+PYO3_PYTHON=$PWD/../.venv/bin/python3 cargo test
+PYO3_PYTHON=$PWD/../.venv/bin/python3 cargo clippy
+```
+
+Without the extension built, the package still works: `modern_fm._backend`
+falls back to the pure-NumPy reference implementations, and the parity tests
+in `tests/test_rust_parity.py` are skipped.
 
 Design documents live in `docs/` — start with `docs/requirements.md` and
 `docs/math_spec.md`. The roadmap is in `docs/roadmap.md`.

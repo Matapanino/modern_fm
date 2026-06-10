@@ -13,9 +13,10 @@ venv/
 .coverage
 htmlcov/
 
-# Rust (Phase 2+)
+# Rust
 target/
 Cargo.lock
+*.so
 
 # Editors / OS
 .DS_Store

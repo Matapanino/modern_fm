@@ -13,9 +13,12 @@ The Python API must feel like scikit-learn:
 - `get_params()` / `set_params()`
 - `save_model(path)` / `load_model(path)`
 
-Primary backend (Phase 2+): Rust CPU via PyO3/maturin, efficient on sparse CSR.
-Current phase (Phase 1): pure-NumPy **reference implementations** in
-`python/modern_fm/_reference.py` that serve as ground truth for all backends.
+Primary backend: Rust CPU via PyO3/maturin, efficient on sparse CSR.
+The pure-NumPy **reference implementations** in `python/modern_fm/_reference.py`
+are the ground truth for all backends — never change them for speed.
+Current state (Phase 2A done): Rust prediction kernels exist in `rust/` and are
+dispatched through the private `modern_fm._backend` module (NumPy fallback when
+the extension is not built). Training (`fit`) is Phase 2B and not implemented.
 
 ## Target models
 
@@ -60,8 +63,8 @@ Current phase (Phase 1): pure-NumPy **reference implementations** in
 
 ## Repository layout
 
-- `python/modern_fm/` — the Python package (maturin mixed-layout ready)
-- `rust/` — Rust backend (added in Phase 2)
+- `python/modern_fm/` — the Python package (maturin mixed layout)
+- `rust/` — Rust backend crate (built as `modern_fm._rust`)
 - `tests/` — pytest suite
 - `docs/` — design documents (the source of truth)
 - `benchmarks/`, `examples/` — non-library code
@@ -70,3 +73,6 @@ Current phase (Phase 1): pure-NumPy **reference implementations** in
 
 - Tests: `.venv/bin/pytest -q`
 - Lint: `.venv/bin/ruff check .`
+- Rebuild Rust extension after editing `rust/`: `.venv/bin/pip install -e .`
+- Rust checks: `cd rust && PYO3_PYTHON=$PWD/../.venv/bin/python3 cargo test`
+  (same for `cargo clippy`; both must be warning-free)
