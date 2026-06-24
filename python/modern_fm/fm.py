@@ -28,6 +28,9 @@ def _check_X(X, n_features=None):
         X = np.asarray(X, dtype=np.float64)
     if X.ndim != 2:
         raise ValueError(f"X must be 2-dimensional, got ndim={X.ndim}")
+    data = X.data if sp.issparse(X) else X
+    if not np.all(np.isfinite(data)):
+        raise ValueError("X contains NaN or infinity, which modern_fm does not accept")
     if n_features is not None and X.shape[1] != n_features:
         raise ValueError(
             f"X has {X.shape[1]} features, but this estimator was fitted with {n_features}"
@@ -71,6 +74,8 @@ class _FMBase(ParamsMixin):
         y = np.asarray(y, dtype=np.float64)
         if y.shape != (n_rows,):
             raise ValueError(f"y has shape {y.shape}, expected ({n_rows},)")
+        if not np.all(np.isfinite(y)):
+            raise ValueError("y contains NaN or infinity")
         rng = np.random.default_rng(self.random_state)
         params = init_fm_params(rng, n_features, self.n_factors, self.init_scale)
         row_orders = make_row_orders(rng, n_rows, self.max_iter)
