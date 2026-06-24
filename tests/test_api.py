@@ -64,18 +64,10 @@ def test_ffm_fit_requires_field_ids():
 
 
 @pytest.mark.parametrize("cls", ESTIMATORS)
-@pytest.mark.parametrize("ctor", [{"batch_size": 2}, {"early_stopping": True}])
-def test_unimplemented_ctor_options_raise(cls, ctor):
+def test_batch_size_not_implemented(cls):
     X, y = _tiny_binary()
     with pytest.raises(NotImplementedError):
-        cls(**ctor).fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
-
-
-@pytest.mark.parametrize("cls", ESTIMATORS)
-def test_eval_set_not_implemented(cls):
-    X, y = _tiny_binary()
-    with pytest.raises(NotImplementedError):
-        cls().fit(X, y, **_ffm_kwargs(cls, X.shape[1]), eval_set=())
+        cls(batch_size=2).fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
 
 
 def test_ffm_softmax_not_implemented():

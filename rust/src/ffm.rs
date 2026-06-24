@@ -102,6 +102,9 @@ pub fn fit_csr(
     w0: &mut f64,
     w: &mut [f64],
     v: &mut [f64],
+    acc_w0: &mut f64,
+    acc_w: &mut [f64],
+    acc_v: &mut [f64],
     n_fields: usize,
     k: usize,
     opt: Optimizer,
@@ -110,9 +113,6 @@ pub fn fit_csr(
     l2_factors: f64,
     row_orders: &[i64],
 ) {
-    let mut acc_w0 = 0.0;
-    let mut acc_w = vec![0.0; w.len()];
-    let mut acc_v = vec![0.0; v.len()];
     let mut idx_buf: Vec<usize> = Vec::new();
     let mut g_v: Vec<f64> = Vec::new();
     let mut touched: Vec<bool> = Vec::new();
@@ -124,7 +124,7 @@ pub fn fit_csr(
         // pass 1: score from pre-update parameters
         let s = ffm_score_row(&idx_buf, values, field_ids, *w0, w, v, n_fields, k);
         let g = sample_weight[r as usize] * (sigmoid(s) - y[r as usize]);
-        apply_update(w0, g, &mut acc_w0, lr, opt);
+        apply_update(w0, g, acc_w0, lr, opt);
         for (&i, &x) in idx_buf.iter().zip(values) {
             let grad = g * x + l2_linear * w[i];
             apply_update(&mut w[i], grad, &mut acc_w[i], lr, opt);
@@ -220,8 +220,10 @@ mod tests {
         };
         let before = loss(w0, &w, &v);
         let orders: Vec<i64> = (0..30).flat_map(|_| [0i64, 1]).collect();
+        let (mut a0, mut aw, mut av) = (0.0, vec![0.0; 2], vec![0.0; 2 * 2 * 2]);
         fit_csr(
-            &csr, &y, &[1.0, 1.0], &field_ids, &mut w0, &mut w, &mut v, 2, 2,
+            &csr, &y, &[1.0, 1.0], &field_ids, &mut w0, &mut w, &mut v,
+            &mut a0, &mut aw, &mut av, 2, 2,
             Optimizer::Adagrad, 0.1, 0.0, 0.0, &orders,
         );
         assert!(loss(w0, &w, &v) < 0.5 * before);

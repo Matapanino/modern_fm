@@ -174,8 +174,10 @@ fn ffm_predict_csr<'py>(
     Ok(out.map_err(val_err)?.into_pyarray(py))
 }
 
-/// Train an FM in place (w, v mutated; new w0 returned). batch_size=1,
-/// single-threaded; see fm::fit_csr and docs/optimization_spec.md.
+/// Train an FM in place (w, v, acc_* mutated; new (w0, acc_w0) returned).
+/// AdaGrad accumulators are passed in/out so the caller can drive epochs one
+/// at a time (early stopping); a single all-epochs call passes zeros. See
+/// fm::fit_csr and docs/optimization_spec.md.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn fm_fit_csr<'py>(
@@ -187,15 +189,18 @@ fn fm_fit_csr<'py>(
     y: PyReadonlyArray1<'py, f64>,
     sample_weight: PyReadonlyArray1<'py, f64>,
     w0: f64,
+    acc_w0: f64,
     mut w: PyReadwriteArray1<'py, f64>,
     mut v: PyReadwriteArray2<'py, f64>,
+    mut acc_w: PyReadwriteArray1<'py, f64>,
+    mut acc_v: PyReadwriteArray2<'py, f64>,
     loss: &str,
     optimizer: &str,
     learning_rate: f64,
     l2_linear: f64,
     l2_factors: f64,
     row_orders: PyReadonlyArray2<'py, i64>,
-) -> PyResult<f64> {
+) -> PyResult<(f64, f64)> {
     let loss = parse_loss(loss)?;
     let opt = parse_optimizer(optimizer)?;
     let k = v.shape()[1];
@@ -213,15 +218,21 @@ fn fm_fit_csr<'py>(
         )));
     }
     let v_s = v.as_slice_mut()?;
-    let out = py.allow_threads(|| -> Result<f64, String> {
+    let acc_w_s = acc_w.as_slice_mut()?;
+    let acc_v_s = acc_v.as_slice_mut()?;
+    if acc_w_s.len() != w_s.len() || acc_v_s.len() != v_s.len() {
+        return Err(val_err("accumulator shapes must match w and V".to_string()));
+    }
+    let out = py.allow_threads(|| -> Result<(f64, f64), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args(&csr, y_s, sw_s, &ro_shape, ro)?;
         let mut w0 = w0;
+        let mut acc_w0 = acc_w0;
         fm::fit_csr(
-            &csr, y_s, sw_s, &mut w0, w_s, v_s, k, loss, opt, learning_rate, l2_linear, l2_factors,
-            ro,
+            &csr, y_s, sw_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s, k, loss, opt,
+            learning_rate, l2_linear, l2_factors, ro,
         );
-        Ok(w0)
+        Ok((w0, acc_w0))
     });
     out.map_err(val_err)
 }
@@ -240,14 +251,17 @@ fn ffm_fit_csr<'py>(
     sample_weight: PyReadonlyArray1<'py, f64>,
     field_ids: PyReadonlyArray1<'py, i64>,
     w0: f64,
+    acc_w0: f64,
     mut w: PyReadwriteArray1<'py, f64>,
     mut v: PyReadwriteArray3<'py, f64>,
+    mut acc_w: PyReadwriteArray1<'py, f64>,
+    mut acc_v: PyReadwriteArray3<'py, f64>,
     optimizer: &str,
     learning_rate: f64,
     l2_linear: f64,
     l2_factors: f64,
     row_orders: PyReadonlyArray2<'py, i64>,
-) -> PyResult<f64> {
+) -> PyResult<(f64, f64)> {
     let opt = parse_optimizer(optimizer)?;
     let (v_rows, n_fields, k) = (v.shape()[0], v.shape()[1], v.shape()[2]);
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
@@ -265,15 +279,21 @@ fn ffm_fit_csr<'py>(
     }
     data::check_field_ids(field_ids_s, n_features, n_fields).map_err(val_err)?;
     let v_s = v.as_slice_mut()?;
-    let out = py.allow_threads(|| -> Result<f64, String> {
+    let acc_w_s = acc_w.as_slice_mut()?;
+    let acc_v_s = acc_v.as_slice_mut()?;
+    if acc_w_s.len() != w_s.len() || acc_v_s.len() != v_s.len() {
+        return Err(val_err("accumulator shapes must match w and V".to_string()));
+    }
+    let out = py.allow_threads(|| -> Result<(f64, f64), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args(&csr, y_s, sw_s, &ro_shape, ro)?;
         let mut w0 = w0;
+        let mut acc_w0 = acc_w0;
         ffm::fit_csr(
-            &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, n_fields, k, opt, learning_rate,
-            l2_linear, l2_factors, ro,
+            &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s,
+            n_fields, k, opt, learning_rate, l2_linear, l2_factors, ro,
         );
-        Ok(w0)
+        Ok((w0, acc_w0))
     });
     out.map_err(val_err)
 }

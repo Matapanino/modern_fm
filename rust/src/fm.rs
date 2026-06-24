@@ -79,6 +79,9 @@ pub fn fit_csr(
     w0: &mut f64,
     w: &mut [f64],
     v: &mut [f64],
+    acc_w0: &mut f64,
+    acc_w: &mut [f64],
+    acc_v: &mut [f64],
     k: usize,
     loss: Loss,
     opt: Optimizer,
@@ -87,9 +90,6 @@ pub fn fit_csr(
     l2_factors: f64,
     row_orders: &[i64],
 ) {
-    let mut acc_w0 = 0.0;
-    let mut acc_w = vec![0.0; w.len()];
-    let mut acc_v = vec![0.0; v.len()];
     let mut cache = vec![0.0; k];
     for &r in row_orders {
         let (indices, values) = csr.row(r as usize);
@@ -110,7 +110,7 @@ pub fn fit_csr(
         let dot: f64 = cache.iter().map(|c| c * c).sum();
         s += 0.5 * (dot - sq);
         let g = sample_weight[r as usize] * loss_grad(loss, s, y[r as usize]);
-        apply_update(w0, g, &mut acc_w0, lr, opt);
+        apply_update(w0, g, acc_w0, lr, opt);
         for (&i, &x) in indices.iter().zip(values) {
             let i = i as usize;
             let grad = g * x + l2_linear * w[i];
@@ -173,8 +173,9 @@ mod tests {
         let data = [1.0];
         let csr = CsrView::new(&indptr, &indices, &data, 1).unwrap();
         let (mut w0, mut w, mut v) = (0.0, vec![0.0], vec![0.0]);
+        let (mut a0, mut aw, mut av) = (0.0, vec![0.0], vec![0.0]);
         fit_csr(
-            &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, 1,
+            &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, &mut a0, &mut aw, &mut av, 1,
             Loss::Logistic, Optimizer::Sgd, 1.0, 0.0, 0.0, &[0],
         );
         assert!((w0 - 0.5).abs() < 1e-15);

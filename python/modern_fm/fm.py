@@ -17,13 +17,14 @@ import scipy.sparse as sp
 
 from . import _backend
 from ._base import ModelIOMixin, ParamsMixin, check_is_fitted
+from ._early_stop import normalize_eval_set, run_epochs, split_indices
 from ._reference_train import (
     OPTIMIZERS,
     init_fm_multiclass_params,
     init_fm_params,
     make_row_orders,
 )
-from .losses import sigmoid, softmax
+from .losses import logistic_loss, sigmoid, softmax, squared_loss
 
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
 
@@ -119,12 +120,6 @@ class _FMBase(ModelIOMixin, ParamsMixin):
             raise ValueError(f"unknown backend {self.backend!r}; only 'rust_cpu' exists in v0.1")
         if self.batch_size != 1:
             raise NotImplementedError(f"mini-batch training (batch_size != 1) {_PHASE4}")
-        if self.early_stopping:
-            raise NotImplementedError(f"early_stopping {_PHASE4}")
-
-    def _validate_fit_extras(self, eval_set):
-        if eval_set is not None:
-            raise NotImplementedError(f"eval_set {_PHASE4}")
 
     def _fit_core(self, X, y, loss, sample_weight=None):
         n_rows, n_features = X.shape
@@ -152,6 +147,56 @@ class _FMBase(ModelIOMixin, ParamsMixin):
         self.V_ = V.astype(out_dtype)
         self.n_features_in_ = n_features
         self.n_iter_ = self.max_iter
+        return self
+
+    def _fit_es(self, X, y_train, y_eval, loss, sample_weight, eval_val):
+        """Epoch-by-epoch fit with early stopping (binary FM / regressor).
+
+        `y_train` are the training targets (smoothed for logistic); `y_eval`
+        the true targets used for the validation metric. `eval_val` is a
+        prepared (X_val, y_val) pair, or None to split off validation_fraction.
+        """
+        n_rows, n_features = X.shape
+        rng = np.random.default_rng(self.random_state)
+        if eval_val is None:
+            tr_idx, val_idx = split_indices(n_rows, self.validation_fraction, rng)
+            X_tr, y_tr = X[tr_idx], y_train[tr_idx]
+            sw_tr = None if sample_weight is None else np.asarray(sample_weight)[tr_idx]
+            X_val, y_val = X[val_idx], y_eval[val_idx]
+        else:
+            X_tr, y_tr, sw_tr = X, y_train, sample_weight
+            X_val, y_val = eval_val
+        n_tr = X_tr.shape[0]
+        init = init_fm_params(rng, n_features, self.n_factors, self.init_scale)
+        row_orders = make_row_orders(rng, n_tr, self.max_iter)
+        state = [0.0, np.zeros(n_features), np.zeros((n_features, self.n_factors))]
+        work = [init[0], init[1], init[2]]
+        metric = logistic_loss if loss == "logistic" else squared_loss
+
+        def train_epoch(e):
+            work[0], work[1], work[2] = _backend.fm_fit(
+                X_tr, y_tr, (work[0], work[1], work[2]), loss=loss, optimizer=self.optimizer,
+                learning_rate=self.learning_rate, l2_linear=self.l2_linear,
+                l2_factors=self.l2_factors, row_orders=row_orders[e : e + 1],
+                sample_weight=sw_tr, state=state,
+            )
+
+        def evaluate():
+            return metric(y_val, _backend.fm_predict_fast(X_val, work[0], work[1], work[2]))
+
+        def snapshot():
+            return (work[0], work[1].copy(), work[2].copy())
+
+        best, n_iter = run_epochs(
+            self.max_iter, self.patience, self.min_delta, train_epoch, evaluate, snapshot
+        )
+        w0, w, V = best
+        out_dtype = np.float32 if self.dtype == "float32" else np.float64
+        self.w0_ = float(w0)
+        self.w_ = w.astype(out_dtype)
+        self.V_ = V.astype(out_dtype)
+        self.n_features_in_ = n_features
+        self.n_iter_ = n_iter
         return self
 
     def _raw_scores(self, X):
@@ -212,7 +257,6 @@ class FMClassifier(_FMBase):
 
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
-        self._validate_fit_extras(eval_set)
         if self.loss not in ("logistic", "softmax"):
             raise ValueError(f"unknown loss {self.loss!r} for FMClassifier")
         X = _check_X(X)
@@ -221,10 +265,19 @@ class FMClassifier(_FMBase):
         if self.classes_.shape[0] < 2:
             raise ValueError("y must contain at least 2 classes")
         if self.classes_.shape[0] > 2 or self.loss == "softmax":
+            if self.early_stopping or eval_set is not None:
+                raise NotImplementedError(f"early stopping with multiclass {_PHASE4}")
             return self._fit_multiclass(X, y, sample_weight)
         y01 = (y == self.classes_[1]).astype(np.float64)
         sw = _combine_weights(y01, self.classes_, sample_weight, self.class_weight, X.shape[0])
-        return self._fit_core(X, _smooth(y01, self.label_smoothing), "logistic", sample_weight=sw)
+        y_train = _smooth(y01, self.label_smoothing)
+        if self.early_stopping or eval_set is not None:
+            eval_val = None
+            if eval_set is not None:
+                Xv, yv = normalize_eval_set(eval_set)
+                eval_val = (_check_X(Xv, X.shape[1]), (yv == self.classes_[1]).astype(np.float64))
+            return self._fit_es(X, y_train, y01, "logistic", sw, eval_val)
+        return self._fit_core(X, y_train, "logistic", sample_weight=sw)
 
     def _fit_multiclass(self, X, y, sample_weight):
         n_rows, n_features = X.shape
@@ -325,9 +378,19 @@ class FMRegressor(_FMBase):
 
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
-        self._validate_fit_extras(eval_set)
         X = _check_X(X)
         sw = _check_sample_weight(sample_weight, X.shape[0])
+        y = np.asarray(y, dtype=np.float64)
+        if y.shape != (X.shape[0],):
+            raise ValueError(f"y has shape {y.shape}, expected ({X.shape[0]},)")
+        if not np.all(np.isfinite(y)):
+            raise ValueError("y contains NaN or infinity")
+        if self.early_stopping or eval_set is not None:
+            eval_val = None
+            if eval_set is not None:
+                Xv, yv = normalize_eval_set(eval_set)
+                eval_val = (_check_X(Xv, X.shape[1]), np.asarray(yv, dtype=np.float64))
+            return self._fit_es(X, y, y, "squared", sw, eval_val)
         return self._fit_core(X, y, "squared", sample_weight=sw)
 
     def predict(self, X):

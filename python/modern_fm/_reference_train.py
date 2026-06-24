@@ -87,6 +87,7 @@ def fm_fit_reference(
     l2_factors=0.0,
     row_orders=None,
     sample_weight=None,
+    state=None,
 ):
     """Train an FM from `params` = (w0, w, V); returns new (w0, w, V) copies.
 
@@ -112,9 +113,10 @@ def fm_fit_reference(
     logistic = loss == "logistic"
     adagrad = optimizer == "adagrad"
     lr = learning_rate
-    a_w0 = 0.0
-    a_w = np.zeros_like(w)
-    a_V = np.zeros_like(V)
+    if state is None:
+        a_w0, a_w, a_V = 0.0, np.zeros_like(w), np.zeros_like(V)
+    else:
+        a_w0, a_w, a_V = state  # accumulators persist across epoch-driven calls
     for order in np.asarray(row_orders):
         for r in order:
             idx, val = rows[r]
@@ -136,6 +138,8 @@ def fm_fit_reference(
                 w0 -= lr * g
                 w[idx] -= lr * g_w
                 V[idx] = Vi - lr * g_V
+    if state is not None:
+        state[0], state[1], state[2] = a_w0, a_w, a_V
     return w0, w, V
 
 
@@ -235,6 +239,7 @@ def ffm_fit_reference(
     l2_factors=0.0,
     row_orders=None,
     sample_weight=None,
+    state=None,
 ):
     """Train an FFM (logistic loss) from `params` = (w0, w, V); returns copies.
 
@@ -259,9 +264,10 @@ def ffm_fit_reference(
         row_orders = np.arange(len(rows))[None, :]
     adagrad = optimizer == "adagrad"
     lr = learning_rate
-    a_w0 = 0.0
-    a_w = np.zeros_like(w)
-    a_V = np.zeros_like(V)
+    if state is None:
+        a_w0, a_w, a_V = 0.0, np.zeros_like(w), np.zeros_like(V)
+    else:
+        a_w0, a_w, a_V = state  # accumulators persist across epoch-driven calls
     for order in np.asarray(row_orders):
         for r in order:
             idx, val = rows[r]
@@ -306,6 +312,8 @@ def ffm_fit_reference(
                         if touched[a, fld]:
                             grad = gV[a, fld] + l2_factors * V[i, fld]
                             V[i, fld] -= lr * grad
+    if state is not None:
+        state[0], state[1], state[2] = a_w0, a_w, a_V
     return w0, w, V
 
 

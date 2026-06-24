@@ -89,30 +89,46 @@ def _prep_fit(X, y, params, row_orders):
     return _prep_csr(Xc), y, float(w0), w, V, row_orders
 
 
+def _acc_arrays(state, w, V):
+    """AdaGrad accumulators (acc_w0, acc_w, acc_v) from `state` or fresh zeros.
+
+    `state` (a mutable list, for the epoch-driven early-stopping path) persists
+    the accumulators across calls; None means a single all-epochs run.
+    """
+    if state is None:
+        return 0.0, np.zeros(len(w)), np.zeros_like(V)
+    acc_w0, acc_w, acc_v = state
+    return float(acc_w0), _prep_vec(acc_w), _prep_dense(acc_v)
+
+
 def fm_fit(
     X, y, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
-    sample_weight=None,
+    sample_weight=None, state=None,
 ):
     """Train an FM with batch_size=1 (docs/optimization_spec.md).
 
     `params` = (w0, w, V) initial values (unchanged); returns new float64
     (w0, w, V). `sample_weight` scales each row's gradient (None -> all ones).
+    `state` carries AdaGrad accumulators in/out for epoch-by-epoch training.
     Rust-accelerated when available, reference fallback otherwise.
     """
     if _rust is None:
         return _reference_train.fm_fit_reference(
             X, y, params, loss=loss, optimizer=optimizer, learning_rate=learning_rate,
             l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
-            sample_weight=sample_weight,
+            sample_weight=sample_weight, state=state,
         )
     (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
         X, y, params, row_orders
     )
     sw = np.ones(len(y)) if sample_weight is None else _prep_vec(sample_weight)
-    w0 = _rust.fm_fit_csr(
-        indptr, indices, data, n_features, y, sw, w0, w, V,
+    acc_w0, acc_w, acc_v = _acc_arrays(state, w, V)
+    w0, acc_w0 = _rust.fm_fit_csr(
+        indptr, indices, data, n_features, y, sw, w0, acc_w0, w, V, acc_w, acc_v,
         loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     )
+    if state is not None:
+        state[0], state[1], state[2] = acc_w0, acc_w, acc_v
     return w0, w, V
 
 
@@ -131,22 +147,25 @@ def fm_fit_multiclass(
 
 def ffm_fit(
     X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
-    sample_weight=None,
+    sample_weight=None, state=None,
 ):
     """Train an FFM (logistic loss) with batch_size=1; see fm_fit."""
     if _rust is None:
         return _reference_train.ffm_fit_reference(
             X, y, field_ids, params, optimizer=optimizer, learning_rate=learning_rate,
             l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
-            sample_weight=sample_weight,
+            sample_weight=sample_weight, state=state,
         )
     field_ids = _prep_vec(field_ids, dtype=np.int64)
     (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
         X, y, params, row_orders
     )
     sw = np.ones(len(y)) if sample_weight is None else _prep_vec(sample_weight)
-    w0 = _rust.ffm_fit_csr(
-        indptr, indices, data, n_features, y, sw, field_ids, w0, w, V,
+    acc_w0, acc_w, acc_v = _acc_arrays(state, w, V)
+    w0, acc_w0 = _rust.ffm_fit_csr(
+        indptr, indices, data, n_features, y, sw, field_ids, w0, acc_w0, w, V, acc_w, acc_v,
         optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     )
+    if state is not None:
+        state[0], state[1], state[2] = acc_w0, acc_w, acc_v
     return w0, w, V
