@@ -4,7 +4,7 @@
 //!       + 0.5 * sum_f [(sum_i v_{i,f} x_i)^2 - sum_i v_{i,f}^2 x_i^2]
 
 use crate::data::{dense_row_nonzeros, CsrView};
-use crate::optimizer::{apply_update, loss_grad, Loss, Optimizer};
+use crate::optimizer::{adam_step, apply_update, loss_grad, Loss, Optimizer};
 
 /// Score one row given its nonzero (index, value) pairs.
 /// `v` is row-major (n_features, k).
@@ -134,6 +134,62 @@ fn update_row(
     }
 }
 
+/// Adam moment vectors (m, v, t) for one parameter group, or empty triples for
+/// the SGD/AdaGrad paths (which never index them).
+fn adam_vecs(adam: bool, len: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    if adam {
+        (vec![0.0; len], vec![0.0; len], vec![0.0; len])
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
+    }
+}
+
+/// Adam counterpart of `update_row`: identical w0 -> w -> V order and lazy L2,
+/// but every parameter steps through `adam_step` with its own (m, v, t) cell.
+/// The slices are sized like (w, V) for the current FM (one class in the
+/// multiclass kernel); w0 uses scalar cells. Shared by binary and multiclass.
+#[allow(clippy::too_many_arguments)]
+fn update_row_adam(
+    indices: &[i64],
+    values: &[f64],
+    g: f64,
+    cache: &[f64],
+    w0: &mut f64,
+    w: &mut [f64],
+    v: &mut [f64],
+    m_w0: &mut f64,
+    v_w0: &mut f64,
+    t_w0: &mut f64,
+    m_w: &mut [f64],
+    v_w: &mut [f64],
+    t_w: &mut [f64],
+    m_v: &mut [f64],
+    v_v: &mut [f64],
+    t_v: &mut [f64],
+    k: usize,
+    lr: f64,
+    l2_linear: f64,
+    l2_factors: f64,
+    beta1: f64,
+    beta2: f64,
+    eps: f64,
+) {
+    adam_step(w0, g, m_w0, v_w0, t_w0, lr, beta1, beta2, eps);
+    for (&i, &x) in indices.iter().zip(values) {
+        let i = i as usize;
+        let grad = g * x + l2_linear * w[i];
+        adam_step(&mut w[i], grad, &mut m_w[i], &mut v_w[i], &mut t_w[i], lr, beta1, beta2, eps);
+    }
+    for (&i, &x) in indices.iter().zip(values) {
+        let i = i as usize;
+        for (f, &cache_f) in cache.iter().enumerate() {
+            let vi = i * k + f;
+            let grad = g * (x * cache_f - v[vi] * x * x) + l2_factors * v[vi];
+            adam_step(&mut v[vi], grad, &mut m_v[vi], &mut v_v[vi], &mut t_v[vi], lr, beta1, beta2, eps);
+        }
+    }
+}
+
 /// Train an FM in place with batch_size=1 (docs/optimization_spec.md).
 ///
 /// Mirrors `_reference_train.fm_fit_reference`: per-row gradients from
@@ -160,14 +216,27 @@ pub fn fit_csr(
     row_orders: &[i64],
 ) {
     let mut cache = vec![0.0; k];
+    // Adam moment state is internal and never round-tripped (optimization_spec.md).
+    let adam = matches!(opt, Optimizer::Adam { .. });
+    let (mut m_w0, mut v_w0, mut t_w0) = (0.0, 0.0, 0.0);
+    let (mut m_w, mut vacc_w, mut t_w) = adam_vecs(adam, w.len());
+    let (mut m_v, mut vacc_v, mut t_v) = adam_vecs(adam, v.len());
     for &r in row_orders {
         let (indices, values) = csr.row(r as usize);
         let s = train_score_row(indices, values, *w0, w, v, k, &mut cache);
         let g = sample_weight[r as usize] * loss_grad(loss, s, y[r as usize]);
-        update_row(
-            indices, values, g, &cache, w0, w, v, acc_w0, acc_w, acc_v, k, opt, lr,
-            l2_linear, l2_factors,
-        );
+        if let Optimizer::Adam { beta1, beta2, eps } = opt {
+            update_row_adam(
+                indices, values, g, &cache, w0, w, v, &mut m_w0, &mut v_w0, &mut t_w0,
+                &mut m_w, &mut vacc_w, &mut t_w, &mut m_v, &mut vacc_v, &mut t_v, k, lr,
+                l2_linear, l2_factors, beta1, beta2, eps,
+            );
+        } else {
+            update_row(
+                indices, values, g, &cache, w0, w, v, acc_w0, acc_w, acc_v, k, opt, lr,
+                l2_linear, l2_factors,
+            );
+        }
     }
 }
 
@@ -203,6 +272,10 @@ pub fn fit_multiclass_csr(
     let mut acc_w0 = vec![0.0; n_classes];
     let mut acc_w = vec![0.0; n_classes * n];
     let mut acc_v = vec![0.0; n_classes * n * k];
+    let adam = matches!(opt, Optimizer::Adam { .. });
+    let (mut m_w0, mut v_w0, mut t_w0) = adam_vecs(adam, n_classes);
+    let (mut m_w, mut vacc_w, mut t_w) = adam_vecs(adam, n_classes * n);
+    let (mut m_v, mut vacc_v, mut t_v) = adam_vecs(adam, n_classes * n * k);
     let off = if n_classes > 1 {
         label_smoothing / (n_classes as f64 - 1.0)
     } else {
@@ -234,23 +307,23 @@ pub fn fit_multiclass_csr(
             let p = probs[c] / sum_ex;
             let target = if c == yc { 1.0 - label_smoothing } else { off };
             let g = sw * (p - target);
-            update_row(
-                indices,
-                values,
-                g,
-                &caches[c * k..(c + 1) * k],
-                &mut w0[c],
-                &mut w[c * n..(c + 1) * n],
-                &mut v[c * n * k..(c + 1) * n * k],
-                &mut acc_w0[c],
-                &mut acc_w[c * n..(c + 1) * n],
-                &mut acc_v[c * n * k..(c + 1) * n * k],
-                k,
-                opt,
-                lr,
-                l2_linear,
-                l2_factors,
-            );
+            let cache_c = &caches[c * k..(c + 1) * k];
+            let (wr, vr) = (c * n..(c + 1) * n, c * n * k..(c + 1) * n * k);
+            if let Optimizer::Adam { beta1, beta2, eps } = opt {
+                update_row_adam(
+                    indices, values, g, cache_c, &mut w0[c], &mut w[wr.clone()], &mut v[vr.clone()],
+                    &mut m_w0[c], &mut v_w0[c], &mut t_w0[c],
+                    &mut m_w[wr.clone()], &mut vacc_w[wr.clone()], &mut t_w[wr],
+                    &mut m_v[vr.clone()], &mut vacc_v[vr.clone()], &mut t_v[vr],
+                    k, lr, l2_linear, l2_factors, beta1, beta2, eps,
+                );
+            } else {
+                update_row(
+                    indices, values, g, cache_c, &mut w0[c], &mut w[wr.clone()], &mut v[vr.clone()],
+                    &mut acc_w0[c], &mut acc_w[wr], &mut acc_v[vr], k, opt, lr, l2_linear,
+                    l2_factors,
+                );
+            }
         }
     }
 }
@@ -308,6 +381,27 @@ mod tests {
         );
         assert!((w0 - 0.5).abs() < 1e-15);
         assert!((w[0] - 0.5).abs() < 1e-15);
+        assert_eq!(v[0], 0.0);
+    }
+
+    #[test]
+    fn adam_one_step_hand_computed() {
+        // Same setup as one_sgd_step but Adam, lr=1: g=sigmoid(0)-1=-0.5.
+        // t=1 -> m_hat=g, v_hat=g^2, step=lr*g/(|g|+eps) ~= -1, so w0,w ~= +1.
+        // V gradient is 0 (cache=0), so V stays exactly 0.
+        let indptr = [0i64, 1];
+        let indices = [0i64];
+        let data = [1.0];
+        let csr = CsrView::new(&indptr, &indices, &data, 1).unwrap();
+        let (mut w0, mut w, mut v) = (0.0, vec![0.0], vec![0.0]);
+        let (mut a0, mut aw, mut av) = (0.0, vec![0.0], vec![0.0]);
+        fit_csr(
+            &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, &mut a0, &mut aw, &mut av, 1,
+            Loss::Logistic, Optimizer::Adam { beta1: 0.9, beta2: 0.999, eps: 1e-8 }, 1.0,
+            0.0, 0.0, &[0],
+        );
+        assert!((w0 - 1.0).abs() < 1e-6);
+        assert!((w[0] - 1.0).abs() < 1e-6);
         assert_eq!(v[0], 0.0);
     }
 

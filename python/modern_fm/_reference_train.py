@@ -26,7 +26,8 @@ from ._reference import _as_dense_rows
 
 ADAGRAD_EPS = 1e-10
 LOSSES = ("logistic", "squared")
-OPTIMIZERS = ("sgd", "adagrad")
+OPTIMIZERS = ("sgd", "adagrad", "adam")
+ADAM_DEFAULTS = dict(beta_1=0.9, beta_2=0.999, epsilon=1e-8)
 
 
 def _sigmoid(s):
@@ -42,6 +43,36 @@ def _check_loss_optimizer(loss, optimizer):
         raise ValueError(f"unknown loss {loss!r}; expected one of {LOSSES}")
     if optimizer not in OPTIMIZERS:
         raise ValueError(f"unknown optimizer {optimizer!r}; expected one of {OPTIMIZERS}")
+
+
+def _adam_scalar(theta, g, m, v, t, lr, beta_1, beta_2, epsilon):
+    """One lazy-Adam step for a scalar parameter (docs/optimization_spec.md).
+
+    Returns the updated (theta, m, v, t). `t` is this parameter's update count;
+    `beta ** t` matches the Rust kernel's `beta.powf(t)`.
+    """
+    t += 1.0
+    m = beta_1 * m + (1.0 - beta_1) * g
+    v = beta_2 * v + (1.0 - beta_2) * g * g
+    m_hat = m / (1.0 - beta_1**t)
+    v_hat = v / (1.0 - beta_2**t)
+    theta -= lr * m_hat / (math.sqrt(v_hat) + epsilon)
+    return theta, m, v, t
+
+
+def _adam_array(theta, g, m, v, t, idx, lr, beta_1, beta_2, epsilon):
+    """One lazy-Adam step, in place, for the coordinates theta[idx].
+
+    `m`, `v`, `t` are per-coordinate accumulators shaped like `theta`; `g` is the
+    gradient at those coordinates (already including lazy L2). idx is duplicate-free
+    (canonical CSR), so the fancy-indexed update is well defined.
+    """
+    t[idx] += 1.0
+    m[idx] = beta_1 * m[idx] + (1.0 - beta_1) * g
+    v[idx] = beta_2 * v[idx] + (1.0 - beta_2) * g * g
+    m_hat = m[idx] / (1.0 - beta_1 ** t[idx])
+    v_hat = v[idx] / (1.0 - beta_2 ** t[idx])
+    theta[idx] -= lr * m_hat / (np.sqrt(v_hat) + epsilon)
 
 
 def init_fm_params(rng, n_features, n_factors, init_scale):
@@ -87,6 +118,9 @@ def fm_fit_reference(
     l2_factors=0.0,
     row_orders=None,
     sample_weight=None,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-8,
     state=None,
 ):
     """Train an FM from `params` = (w0, w, V); returns new (w0, w, V) copies.
@@ -112,11 +146,20 @@ def fm_fit_reference(
         row_orders = np.arange(len(rows))[None, :]
     logistic = loss == "logistic"
     adagrad = optimizer == "adagrad"
+    adam = optimizer == "adam"
+    if adam and state is not None:
+        raise NotImplementedError(
+            "Adam does not support the early-stopping state hand-off in v0.2"
+        )
     lr = learning_rate
     if state is None:
         a_w0, a_w, a_V = 0.0, np.zeros_like(w), np.zeros_like(V)
     else:
         a_w0, a_w, a_V = state  # accumulators persist across epoch-driven calls
+    if adam:
+        m_w0, v_w0, t_w0 = 0.0, 0.0, 0.0
+        m_w, v_w, t_w = np.zeros_like(w), np.zeros_like(w), np.zeros_like(w)
+        m_V, v_V, t_V = np.zeros_like(V), np.zeros_like(V), np.zeros_like(V)
     for order in np.asarray(row_orders):
         for r in order:
             idx, val = rows[r]
@@ -134,6 +177,12 @@ def fm_fit_reference(
                 w[idx] -= lr * g_w / np.sqrt(a_w[idx] + ADAGRAD_EPS)
                 a_V[idx] += g_V**2
                 V[idx] = Vi - lr * g_V / np.sqrt(a_V[idx] + ADAGRAD_EPS)
+            elif adam:
+                w0, m_w0, v_w0, t_w0 = _adam_scalar(
+                    w0, g, m_w0, v_w0, t_w0, lr, beta_1, beta_2, epsilon
+                )
+                _adam_array(w, g_w, m_w, v_w, t_w, idx, lr, beta_1, beta_2, epsilon)
+                _adam_array(V, g_V, m_V, v_V, t_V, idx, lr, beta_1, beta_2, epsilon)
             else:
                 w0 -= lr * g
                 w[idx] -= lr * g_w
@@ -155,6 +204,9 @@ def fm_fit_multiclass_reference(
     row_orders=None,
     label_smoothing=0.0,
     sample_weight=None,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-8,
 ):
     """Train a multiclass (softmax) FM: one FM per class, coupled by softmax.
 
@@ -182,12 +234,17 @@ def fm_fit_multiclass_reference(
     if row_orders is None:
         row_orders = np.arange(len(rows))[None, :]
     adagrad = optimizer == "adagrad"
+    adam = optimizer == "adam"
     lr = learning_rate
     eps = label_smoothing
     off = eps / (n_classes - 1) if n_classes > 1 else 0.0
     a_w0 = np.zeros_like(w0)
     a_w = np.zeros_like(w)
     a_V = np.zeros_like(V)
+    if adam:
+        m_w0, v_w0, t_w0 = np.zeros_like(w0), np.zeros_like(w0), np.zeros_like(w0)
+        m_w, v_w, t_w = np.zeros_like(w), np.zeros_like(w), np.zeros_like(w)
+        m_V, v_V, t_V = np.zeros_like(V), np.zeros_like(V), np.zeros_like(V)
     for order in np.asarray(row_orders):
         for r in order:
             idx, val = rows[r]
@@ -220,6 +277,12 @@ def fm_fit_multiclass_reference(
                     w[c][idx] -= lr * g_w / np.sqrt(a_w[c][idx] + ADAGRAD_EPS)
                     a_V[c][idx] += g_V**2
                     V[c][idx] = Vi - lr * g_V / np.sqrt(a_V[c][idx] + ADAGRAD_EPS)
+                elif adam:
+                    w0[c], m_w0[c], v_w0[c], t_w0[c] = _adam_scalar(
+                        w0[c], g, m_w0[c], v_w0[c], t_w0[c], lr, beta_1, beta_2, epsilon
+                    )
+                    _adam_array(w[c], g_w, m_w[c], v_w[c], t_w[c], idx, lr, beta_1, beta_2, epsilon)
+                    _adam_array(V[c], g_V, m_V[c], v_V[c], t_V[c], idx, lr, beta_1, beta_2, epsilon)
                 else:
                     w0[c] -= lr * g
                     w[c][idx] -= lr * g_w
@@ -239,6 +302,9 @@ def ffm_fit_reference(
     l2_factors=0.0,
     row_orders=None,
     sample_weight=None,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-8,
     state=None,
 ):
     """Train an FFM (logistic loss) from `params` = (w0, w, V); returns copies.
@@ -263,11 +329,20 @@ def ffm_fit_reference(
     if row_orders is None:
         row_orders = np.arange(len(rows))[None, :]
     adagrad = optimizer == "adagrad"
+    adam = optimizer == "adam"
+    if adam and state is not None:
+        raise NotImplementedError(
+            "Adam does not support the early-stopping state hand-off in v0.2"
+        )
     lr = learning_rate
     if state is None:
         a_w0, a_w, a_V = 0.0, np.zeros_like(w), np.zeros_like(V)
     else:
         a_w0, a_w, a_V = state  # accumulators persist across epoch-driven calls
+    if adam:
+        m_w0, v_w0, t_w0 = 0.0, 0.0, 0.0
+        m_w, v_w, t_w = np.zeros_like(w), np.zeros_like(w), np.zeros_like(w)
+        m_V, v_V, t_V = np.zeros_like(V), np.zeros_like(V), np.zeros_like(V)
     for order in np.asarray(row_orders):
         for r in order:
             idx, val = rows[r]
@@ -303,6 +378,19 @@ def ffm_fit_reference(
                             grad = gV[a, fld] + l2_factors * V[i, fld]
                             a_V[i, fld] += grad**2
                             V[i, fld] -= lr * grad / np.sqrt(a_V[i, fld] + ADAGRAD_EPS)
+            elif adam:
+                w0, m_w0, v_w0, t_w0 = _adam_scalar(
+                    w0, g, m_w0, v_w0, t_w0, lr, beta_1, beta_2, epsilon
+                )
+                _adam_array(w, g_w, m_w, v_w, t_w, idx, lr, beta_1, beta_2, epsilon)
+                for a in range(z):
+                    i = idx[a]
+                    for fld in range(n_fields):
+                        if touched[a, fld]:
+                            grad = gV[a, fld] + l2_factors * V[i, fld]
+                            _adam_array(
+                                V, grad, m_V, v_V, t_V, (i, fld), lr, beta_1, beta_2, epsilon
+                            )
             else:
                 w0 -= lr * g
                 w[idx] -= lr * g_w
@@ -331,6 +419,9 @@ def fm_train(
     init_scale=0.01,
     random_state=None,
     shuffle=True,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-8,
 ):
     """Seeded end-to-end FM training: init + per-epoch shuffling + fit."""
     rng = np.random.default_rng(random_state)
@@ -346,6 +437,9 @@ def fm_train(
         l2_linear=l2_linear,
         l2_factors=l2_factors,
         row_orders=row_orders,
+        beta_1=beta_1,
+        beta_2=beta_2,
+        epsilon=epsilon,
     )
 
 
@@ -363,6 +457,9 @@ def ffm_train(
     init_scale=0.01,
     random_state=None,
     shuffle=True,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-8,
 ):
     """Seeded end-to-end FFM training (logistic loss)."""
     rng = np.random.default_rng(random_state)
@@ -380,4 +477,7 @@ def ffm_train(
         l2_linear=l2_linear,
         l2_factors=l2_factors,
         row_orders=row_orders,
+        beta_1=beta_1,
+        beta_2=beta_2,
+        epsilon=epsilon,
     )

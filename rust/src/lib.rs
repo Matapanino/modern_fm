@@ -33,10 +33,15 @@ fn parse_loss(s: &str) -> PyResult<Loss> {
     }
 }
 
-fn parse_optimizer(s: &str) -> PyResult<Optimizer> {
+fn parse_optimizer(s: &str, beta_1: f64, beta_2: f64, epsilon: f64) -> PyResult<Optimizer> {
     match s {
         "sgd" => Ok(Optimizer::Sgd),
         "adagrad" => Ok(Optimizer::Adagrad),
+        "adam" => Ok(Optimizer::Adam {
+            beta1: beta_1,
+            beta2: beta_2,
+            eps: epsilon,
+        }),
         _ => Err(val_err(format!("unknown optimizer {s:?}"))),
     }
 }
@@ -226,10 +231,13 @@ fn fm_fit_csr<'py>(
     learning_rate: f64,
     l2_linear: f64,
     l2_factors: f64,
+    beta_1: f64,
+    beta_2: f64,
+    epsilon: f64,
     row_orders: PyReadonlyArray2<'py, i64>,
 ) -> PyResult<(f64, f64)> {
     let loss = parse_loss(loss)?;
-    let opt = parse_optimizer(optimizer)?;
+    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon)?;
     let k = v.shape()[1];
     let v_rows = v.shape()[0];
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
@@ -286,9 +294,12 @@ fn fm_fit_multiclass_csr<'py>(
     l2_linear: f64,
     l2_factors: f64,
     label_smoothing: f64,
+    beta_1: f64,
+    beta_2: f64,
+    epsilon: f64,
     row_orders: PyReadonlyArray2<'py, i64>,
 ) -> PyResult<()> {
-    let opt = parse_optimizer(optimizer)?;
+    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon)?;
     let (n_classes, v_n, k) = (v.shape()[0], v.shape()[1], v.shape()[2]);
     let w_shape = [w.shape()[0], w.shape()[1]];
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
@@ -341,9 +352,12 @@ fn ffm_fit_csr<'py>(
     learning_rate: f64,
     l2_linear: f64,
     l2_factors: f64,
+    beta_1: f64,
+    beta_2: f64,
+    epsilon: f64,
     row_orders: PyReadonlyArray2<'py, i64>,
 ) -> PyResult<(f64, f64)> {
-    let opt = parse_optimizer(optimizer)?;
+    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon)?;
     let (v_rows, n_fields, k) = (v.shape()[0], v.shape()[1], v.shape()[2]);
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
     let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);

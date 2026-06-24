@@ -177,3 +177,38 @@ def test_dense_and_csr_training_equivalent(cls):
     assert dense.w0_ == pytest.approx(sparse.w0_, rel=1e-9, abs=1e-12)
     np.testing.assert_allclose(dense.w_, sparse.w_, rtol=1e-9, atol=1e-12)
     np.testing.assert_allclose(dense.V_, sparse.V_, rtol=1e-9, atol=1e-12)
+
+
+@pytest.mark.parametrize("cls", CLASSIFIERS)
+def test_adam_classifier_learns(cls):
+    X, y = _separable_binary(n=120)
+    model = _fit(_make(cls, optimizer="adam"), X, y)
+    assert (model.predict(X) == y).mean() > 0.75
+
+
+def test_adam_regressor_learns():
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(100, 5))
+    y = X @ rng.normal(size=5)
+    model = FMRegressor(optimizer="adam", random_state=0, max_iter=60, learning_rate=0.05).fit(X, y)
+    baseline = squared_loss(y, np.full_like(y, y.mean()))
+    assert squared_loss(y, model.predict(X)) < 0.5 * baseline
+
+
+def test_adam_multiclass_learns():
+    rng = np.random.default_rng(2)
+    X = rng.normal(size=(150, 6))
+    y = (X[:, :3] @ rng.normal(size=(3, 3))).argmax(axis=1)  # 3-class, learnable
+    model = FMClassifier(
+        optimizer="adam", random_state=0, max_iter=60, learning_rate=0.05
+    ).fit(X, y)
+    assert model.V_.shape[0] == 3  # one parameter set per class
+    np.testing.assert_array_equal(model.classes_, np.array([0, 1, 2]))
+    assert (model.predict(X) == y).mean() > 0.6
+
+
+@pytest.mark.parametrize("cls", ALL)
+def test_adam_early_stopping_not_implemented(cls):
+    X, y = _separable_binary(n=40)
+    with pytest.raises(NotImplementedError):
+        _fit(_make(cls, optimizer="adam", early_stopping=True), X, y)

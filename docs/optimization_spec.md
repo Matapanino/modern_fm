@@ -46,6 +46,32 @@ theta -= learning_rate * grad / sqrt(G + epsilon)
 
 This is what libffm uses for FFM and is robust on sparse data.
 
+## Adam (v0.2)
+
+Per-parameter **lazy** Adam. Each coordinate keeps its own moments `(m, v)` and an
+update count `t`; `t` increments only when the coordinate is touched by a row
+(consistent with lazy L2 above), so bias correction adapts per coordinate and the
+update is exactly reproducible. Hyperparameters `beta_1` (default `0.9`), `beta_2`
+(default `0.999`), `epsilon` (default `1e-8`); `learning_rate` is the step size α.
+
+```
+t      += 1
+m       = beta_1 * m + (1 - beta_1) * grad
+v       = beta_2 * v + (1 - beta_2) * grad^2
+m_hat   = m / (1 - beta_1^t)
+v_hat   = v / (1 - beta_2^t)
+theta  -= learning_rate * m_hat / (sqrt(v_hat) + epsilon)
+```
+
+`epsilon` is added **outside** the square root. `grad` already includes lazy L2
+(`+ l2_linear * w_i` / `+ l2_factors * v`), exactly as for SGD/AdaGrad. The Rust
+kernel uses `beta.powf(t)` to match Python's `beta ** t`.
+
+The `(m, v, t)` accumulators are internal to a single `fit` call. Adam combined
+with early stopping (which drives epochs one at a time and would need the moments
+handed back and forth) is **deferred in v0.2** — the estimators raise
+`NotImplementedError`, mirroring the multiclass + early-stopping deferral.
+
 ## Training loop
 
 - shuffle row order each epoch with the seeded RNG

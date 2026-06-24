@@ -6,7 +6,7 @@
 //! factorization for FFM.
 
 use crate::data::{dense_row_nonzeros, CsrView};
-use crate::optimizer::{apply_update, sigmoid, Optimizer};
+use crate::optimizer::{adam_step, apply_update, sigmoid, Optimizer};
 
 /// Score one row given its nonzero (index, value) pairs.
 /// `v` is row-major (n_features, n_fields, k).
@@ -116,6 +116,13 @@ pub fn fit_csr(
     let mut idx_buf: Vec<usize> = Vec::new();
     let mut g_v: Vec<f64> = Vec::new();
     let mut touched: Vec<bool> = Vec::new();
+    // Adam moment state (first moment m, second moment s, count t); empty unless
+    // Adam, never round-tripped (optimization_spec.md).
+    let adam = matches!(opt, Optimizer::Adam { .. });
+    let alloc = |n: usize| if adam { vec![0.0; n] } else { Vec::new() };
+    let (mut m_w0, mut s_w0, mut t_w0) = (0.0_f64, 0.0_f64, 0.0_f64);
+    let (mut m_w, mut s_w, mut t_w) = (alloc(w.len()), alloc(w.len()), alloc(w.len()));
+    let (mut m_v, mut s_v, mut t_v) = (alloc(v.len()), alloc(v.len()), alloc(v.len()));
     for &r in row_orders {
         let (indices, values) = csr.row(r as usize);
         let z = indices.len();
@@ -124,10 +131,18 @@ pub fn fit_csr(
         // pass 1: score from pre-update parameters
         let s = ffm_score_row(&idx_buf, values, field_ids, *w0, w, v, n_fields, k);
         let g = sample_weight[r as usize] * (sigmoid(s) - y[r as usize]);
-        apply_update(w0, g, acc_w0, lr, opt);
+        if let Optimizer::Adam { beta1, beta2, eps } = opt {
+            adam_step(w0, g, &mut m_w0, &mut s_w0, &mut t_w0, lr, beta1, beta2, eps);
+        } else {
+            apply_update(w0, g, acc_w0, lr, opt);
+        }
         for (&i, &x) in idx_buf.iter().zip(values) {
             let grad = g * x + l2_linear * w[i];
-            apply_update(&mut w[i], grad, &mut acc_w[i], lr, opt);
+            if let Optimizer::Adam { beta1, beta2, eps } = opt {
+                adam_step(&mut w[i], grad, &mut m_w[i], &mut s_w[i], &mut t_w[i], lr, beta1, beta2, eps);
+            } else {
+                apply_update(&mut w[i], grad, &mut acc_w[i], lr, opt);
+            }
         }
         // pass 2: accumulate V gradients per touched (feature, field) slot
         g_v.clear();
@@ -160,7 +175,14 @@ pub fn fit_csr(
                     for t in 0..k {
                         let vi = (i * n_fields + fld) * k + t;
                         let grad = g_v[(a * n_fields + fld) * k + t] + l2_factors * v[vi];
-                        apply_update(&mut v[vi], grad, &mut acc_v[vi], lr, opt);
+                        if let Optimizer::Adam { beta1, beta2, eps } = opt {
+                            adam_step(
+                                &mut v[vi], grad, &mut m_v[vi], &mut s_v[vi], &mut t_v[vi], lr,
+                                beta1, beta2, eps,
+                            );
+                        } else {
+                            apply_update(&mut v[vi], grad, &mut acc_v[vi], lr, opt);
+                        }
                     }
                 }
             }

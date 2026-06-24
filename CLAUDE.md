@@ -18,9 +18,11 @@ The pure-NumPy **reference implementations** in `python/modern_fm/_reference.py`
 are the ground truth for all backends — never change them for speed.
 Current state: v0.1 (Phases 0–4) is implemented and tested. Rust kernels in
 `rust/` cover FM/FFM prediction and training — FM binary (logistic/squared) and
-multiclass softmax, plus FFM logistic, all SGD/AdaGrad — dispatched through the
-private `modern_fm._backend` module (NumPy reference fallback when the extension
-is not built). Remaining v0.2 work: mini-batch, `rayon` parallelism, Adam/FTRL.
+multiclass softmax, plus FFM logistic, all SGD/AdaGrad/Adam — dispatched through
+the private `modern_fm._backend` module (NumPy reference fallback when the
+extension is not built). Adam is per-parameter lazy Adam (`beta_1`/`beta_2`/
+`epsilon`); it does not yet combine with early stopping. Remaining v0.2 work:
+mini-batch, `rayon` parallelism, FTRL.
 
 ## Target models
 

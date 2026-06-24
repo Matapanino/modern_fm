@@ -6,8 +6,10 @@ time — no automatic field inference in v0.1; the mapping is stored on the
 model (`field_ids_`, `n_fields_`) so predict-time calls do not take it.
 
 Training runs in float64; learned attributes are stored in the requested
-`dtype`. Multiclass, mini-batches, early stopping, class_weight,
-sample_weight, label_smoothing and save/load land in later phases.
+`dtype`. Supports class_weight, sample_weight, label_smoothing, early
+stopping/eval_set, save/load, and the SGD/AdaGrad/Adam optimizers. Multiclass
+(softmax), mini-batches (batch_size != 1), and early stopping combined with
+the Adam optimizer raise NotImplementedError (see docs/roadmap.md).
 """
 
 from __future__ import annotations
@@ -18,7 +20,13 @@ from . import _backend
 from ._base import ModelIOMixin, ParamsMixin, check_is_fitted
 from ._early_stop import normalize_eval_set, run_epochs, split_indices
 from ._reference_train import OPTIMIZERS, init_ffm_params, make_row_orders
-from .fm import _check_binary_classes, _check_X, _combine_weights, _smooth
+from .fm import (
+    _check_binary_classes,
+    _check_X,
+    _combine_weights,
+    _no_adam_early_stopping,
+    _smooth,
+)
 from .losses import logistic_loss, sigmoid
 
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
@@ -34,6 +42,9 @@ class FFMClassifier(ModelIOMixin, ParamsMixin):
         loss="logistic",
         optimizer="adagrad",
         learning_rate=0.05,
+        beta_1=0.9,
+        beta_2=0.999,
+        epsilon=1e-8,
         max_iter=50,
         batch_size=1,
         l2_linear=1e-5,
@@ -55,6 +66,9 @@ class FFMClassifier(ModelIOMixin, ParamsMixin):
         self.loss = loss
         self.optimizer = optimizer
         self.learning_rate = learning_rate
+        self.beta_1 = beta_1
+        self.beta_2 = beta_2
+        self.epsilon = epsilon
         self.max_iter = max_iter
         self.batch_size = batch_size
         self.l2_linear = l2_linear
@@ -90,6 +104,7 @@ class FFMClassifier(ModelIOMixin, ParamsMixin):
             raise NotImplementedError(f"multiclass (softmax) {_PHASE4}")
         if self.loss != "logistic":
             raise ValueError(f"unknown loss {self.loss!r} for FFMClassifier")
+        _no_adam_early_stopping(self.optimizer, self.early_stopping, eval_set)
 
         X = _check_X(X)
         n_rows, n_features = X.shape
@@ -126,6 +141,9 @@ class FFMClassifier(ModelIOMixin, ParamsMixin):
             l2_linear=self.l2_linear,
             l2_factors=self.l2_factors,
             row_orders=row_orders,
+            beta_1=self.beta_1,
+            beta_2=self.beta_2,
+            epsilon=self.epsilon,
             sample_weight=sw,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64

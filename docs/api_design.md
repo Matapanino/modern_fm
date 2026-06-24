@@ -12,8 +12,11 @@ from modern_fm import FMClassifier
 model = FMClassifier(
     n_factors=16,
     loss="logistic",          # classifier: "logistic" (binary) / "softmax" (auto for multiclass)
-    optimizer="adagrad",      # "sgd" | "adagrad"  (v0.2: "adam", "ftrl")
+    optimizer="adagrad",      # "sgd" | "adagrad" | "adam"  (v0.2: "ftrl")
     learning_rate=0.05,
+    beta_1=0.9,               # Adam 1st-moment decay (optimizer="adam" only)
+    beta_2=0.999,             # Adam 2nd-moment decay (optimizer="adam" only)
+    epsilon=1e-8,             # Adam denominator epsilon (optimizer="adam" only)
     max_iter=100,
     batch_size=4096,
     l2_linear=1e-5,

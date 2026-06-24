@@ -6,9 +6,11 @@ reference otherwise) with batch_size=1, single-threaded. Supports class_weight,
 sample_weight, label_smoothing, early stopping/eval_set, and save/load. Training
 always runs in float64; learned attributes are stored in the requested `dtype`.
 
+Optimizers: SGD, AdaGrad, and Adam ("adam", with beta_1/beta_2/epsilon).
+
 Not implemented yet (raise NotImplementedError at fit time): mini-batches
-(batch_size != 1), and early stopping combined with multiclass. See
-docs/roadmap.md.
+(batch_size != 1), and early stopping combined with multiclass or the Adam
+optimizer. See docs/roadmap.md.
 """
 
 from __future__ import annotations
@@ -111,6 +113,13 @@ def _smooth(y01, label_smoothing):
     return y01 * (1.0 - label_smoothing) + 0.5 * label_smoothing
 
 
+def _no_adam_early_stopping(optimizer, early_stopping, eval_set):
+    """Adam keeps its moment state internal and cannot drive epochs one at a
+    time, so it is incompatible with early stopping in v0.2 (see roadmap)."""
+    if optimizer == "adam" and (early_stopping or eval_set is not None):
+        raise NotImplementedError(f"early stopping with the Adam optimizer {_PHASE4}")
+
+
 class _FMBase(ModelIOMixin, ParamsMixin):
     def _validate_common(self):
         if self.optimizer not in OPTIMIZERS:
@@ -140,6 +149,9 @@ class _FMBase(ModelIOMixin, ParamsMixin):
             l2_linear=self.l2_linear,
             l2_factors=self.l2_factors,
             row_orders=row_orders,
+            beta_1=self.beta_1,
+            beta_2=self.beta_2,
+            epsilon=self.epsilon,
             sample_weight=sample_weight,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
@@ -218,6 +230,9 @@ class FMClassifier(_FMBase):
         loss="logistic",
         optimizer="adagrad",
         learning_rate=0.05,
+        beta_1=0.9,
+        beta_2=0.999,
+        epsilon=1e-8,
         max_iter=100,
         batch_size=1,
         l2_linear=1e-5,
@@ -239,6 +254,9 @@ class FMClassifier(_FMBase):
         self.loss = loss
         self.optimizer = optimizer
         self.learning_rate = learning_rate
+        self.beta_1 = beta_1
+        self.beta_2 = beta_2
+        self.epsilon = epsilon
         self.max_iter = max_iter
         self.batch_size = batch_size
         self.l2_linear = l2_linear
@@ -258,6 +276,7 @@ class FMClassifier(_FMBase):
 
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
+        _no_adam_early_stopping(self.optimizer, self.early_stopping, eval_set)
         if self.loss not in ("logistic", "softmax"):
             raise ValueError(f"unknown loss {self.loss!r} for FMClassifier")
         X = _check_X(X)
@@ -300,6 +319,9 @@ class FMClassifier(_FMBase):
             l2_factors=self.l2_factors,
             row_orders=row_orders,
             label_smoothing=self.label_smoothing,
+            beta_1=self.beta_1,
+            beta_2=self.beta_2,
+            epsilon=self.epsilon,
             sample_weight=sw,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
@@ -344,6 +366,9 @@ class FMRegressor(_FMBase):
         n_factors=16,
         optimizer="adagrad",
         learning_rate=0.05,
+        beta_1=0.9,
+        beta_2=0.999,
+        epsilon=1e-8,
         max_iter=100,
         batch_size=1,
         l2_linear=1e-5,
@@ -362,6 +387,9 @@ class FMRegressor(_FMBase):
         self.n_factors = n_factors
         self.optimizer = optimizer
         self.learning_rate = learning_rate
+        self.beta_1 = beta_1
+        self.beta_2 = beta_2
+        self.epsilon = epsilon
         self.max_iter = max_iter
         self.batch_size = batch_size
         self.l2_linear = l2_linear
@@ -379,6 +407,7 @@ class FMRegressor(_FMBase):
 
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
+        _no_adam_early_stopping(self.optimizer, self.early_stopping, eval_set)
         X = _check_X(X)
         sw = _check_sample_weight(sample_weight, X.shape[0])
         y = np.asarray(y, dtype=np.float64)

@@ -17,7 +17,7 @@ def _binary_data(seed=0, n=80, d=6):
     return X, y
 
 
-@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
 def test_fm_logistic_loss_decreases(optimizer):
     X, y = _binary_data()
     w0, w, V = fm_train(
@@ -26,7 +26,7 @@ def test_fm_logistic_loss_decreases(optimizer):
     assert logistic_loss(y, fm_predict_fast(X, w0, w, V)) < 0.7 * LOG2
 
 
-@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
 def test_fm_squared_loss_decreases(optimizer):
     rng = np.random.default_rng(1)
     X = rng.normal(size=(80, 5))
@@ -39,7 +39,7 @@ def test_fm_squared_loss_decreases(optimizer):
     assert squared_loss(y, fm_predict_fast(X, w0, w, V)) < 0.3 * baseline
 
 
-@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
 def test_ffm_logistic_loss_decreases(optimizer):
     X, y = _binary_data(n=60, d=6)
     field_ids = np.array([0, 0, 1, 1, 2, 2])
@@ -81,4 +81,4 @@ def test_unknown_loss_and_optimizer_raise():
     with pytest.raises(ValueError, match="loss"):
         fm_train(X, y, loss="hinge")
     with pytest.raises(ValueError, match="optimizer"):
-        fm_train(X, y, optimizer="adam")
+        fm_train(X, y, optimizer="rmsprop")

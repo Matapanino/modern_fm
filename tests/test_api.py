@@ -38,6 +38,14 @@ def test_get_set_params_roundtrip(cls):
 
 
 @pytest.mark.parametrize("cls", ESTIMATORS)
+def test_adam_params_roundtrip(cls):
+    model = cls(optimizer="adam", beta_1=0.85, beta_2=0.99, epsilon=1e-7)
+    params = model.get_params()
+    assert (params["beta_1"], params["beta_2"], params["epsilon"]) == (0.85, 0.99, 1e-7)
+    assert cls().set_params(**params).get_params() == params
+
+
+@pytest.mark.parametrize("cls", ESTIMATORS)
 def test_set_params_rejects_unknown(cls):
     with pytest.raises(ValueError, match="Invalid parameter"):
         cls().set_params(definitely_not_a_param=1)

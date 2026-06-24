@@ -28,7 +28,10 @@
 
 ## v0.2 — Training quality & throughput
 
-- FTRL optimizer, Adam
+- [x] Adam optimizer (`optimizer="adam"`, per-parameter lazy Adam with
+  `beta_1`/`beta_2`/`epsilon`); FM binary/multiclass + FFM, parity-tested vs the
+  NumPy reference. Adam + early stopping is deferred (moments are not round-tripped).
+- FTRL optimizer
 - [x] Rust multiclass-softmax training kernel (`fm_fit_multiclass_csr`),
   parity-tested vs the NumPy reference (done ahead of v0.2)
 - mini-batch (`batch_size > 1`); `rayon` row-parallelism (`n_jobs > 1`)

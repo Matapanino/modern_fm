@@ -34,7 +34,7 @@ def _assert_params_close(a, b):
 
 
 @pytest.mark.parametrize("loss", ["logistic", "squared"])
-@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
 def test_fm_training_parity(rng, loss, optimizer):
     n, d, k = 40, 10, 3
     X = random_sparse_dense_X(rng, n, d, density=0.4)
@@ -51,7 +51,7 @@ def test_fm_training_parity(rng, loss, optimizer):
     )
 
 
-@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
 def test_ffm_training_parity(rng, optimizer):
     n, d, n_fields, k = 30, 8, 3, 2
     X = random_sparse_dense_X(rng, n, d, density=0.5)
@@ -110,7 +110,7 @@ def test_rust_fit_rejects_bad_row_orders(rng):
         )
 
 
-@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
 def test_fm_training_parity_sample_weight(rng, optimizer):
     n, d, k = 35, 9, 3
     X = random_sparse_dense_X(rng, n, d, density=0.4)
@@ -160,7 +160,7 @@ def test_rust_fit_rejects_bad_sample_weight_length(rng):
 
 @pytest.mark.parametrize("n_classes", [3, 4])
 @pytest.mark.parametrize("label_smoothing", [0.0, 0.1])
-@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
 def test_fm_multiclass_training_parity(rng, optimizer, label_smoothing, n_classes):
     n, d, k = 40, 10, 3
     X = random_sparse_dense_X(rng, n, d, density=0.4)
@@ -176,7 +176,7 @@ def test_fm_multiclass_training_parity(rng, optimizer, label_smoothing, n_classe
     )
 
 
-@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
 def test_fm_multiclass_training_parity_sample_weight(rng, optimizer):
     n, d, k, n_classes = 35, 9, 3, 4
     X = random_sparse_dense_X(rng, n, d, density=0.4)
@@ -246,3 +246,46 @@ def test_rust_multiclass_fit_rejects_bad_class_index(rng):
             X, y, params, optimizer="sgd", learning_rate=0.1, l2_linear=0.0,
             l2_factors=0.0, row_orders=make_row_orders(rng, n, epochs=1),
         )
+
+
+def test_adam_nondefault_hyperparams_parity(rng):
+    """Custom beta_1/beta_2/epsilon must reach both backends (FM, FFM, multiclass),
+    not be hard-coded — parity would break if either path ignored them. A
+    divergence check confirms the custom values actually change the result, so a
+    'both silently default' false pass cannot hide a plumbing bug."""
+    betas = dict(beta_1=0.8, beta_2=0.9, epsilon=1e-6)
+    n, d, k = 40, 10, 3
+    X = random_sparse_dense_X(rng, n, d, density=0.4)
+    ro = make_row_orders(rng, n, epochs=3)
+    y = (rng.random(n) > 0.5).astype(np.float64)
+
+    # FM binary: parity at custom betas, and custom betas differ from defaults.
+    params = init_fm_params(rng, d, k, 0.05)
+    base = dict(loss="logistic", optimizer="adam", learning_rate=0.1,
+                l2_linear=1e-3, l2_factors=1e-3, row_orders=ro)
+    rust_custom = _backend.fm_fit(X, y, params, **base, **betas)
+    _assert_params_close(rust_custom, fm_fit_reference(X, y, params, **base, **betas))
+    ref_default = fm_fit_reference(X, y, params, **base)
+    assert not np.allclose(rust_custom[2], ref_default[2]), "betas had no effect"
+
+    # FFM
+    n_fields = 3
+    field_ids = rng.integers(0, n_fields, size=d)
+    pf = init_ffm_params(rng, d, n_fields, k, 0.05)
+    kwf = dict(optimizer="adam", learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+               row_orders=ro, **betas)
+    _assert_params_close(
+        _backend.ffm_fit(X, y, field_ids, pf, **kwf),
+        ffm_fit_reference(X, y, field_ids, pf, **kwf),
+    )
+
+    # FM multiclass (with label smoothing)
+    n_classes = 4
+    ym = rng.integers(0, n_classes, size=n)
+    pm = init_fm_multiclass_params(rng, n_classes, d, k, 0.05)
+    kwm = dict(optimizer="adam", learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+               row_orders=ro, label_smoothing=0.1, **betas)
+    _assert_params_close(
+        _backend.fm_fit_multiclass(X, ym, pm, **kwm),
+        fm_fit_multiclass_reference(X, ym, pm, **kwm),
+    )
