@@ -3,11 +3,17 @@
 Fast, sklearn-compatible Factorization Machines (FM) and Field-aware
 Factorization Machines (FFM) for Python.
 
-**Status: pre-alpha (v0.1 Phase 2A).** Pure-NumPy reference implementations,
-the public API skeleton, and a Rust prediction backend with full parity tests
-exist. Training (`fit`) lands in Phase 2B and is not implemented yet.
+**Status: v0.1 in development.** Implemented: pure-NumPy reference
+implementations, a Rust CPU backend for prediction and SGD/AdaGrad training
+(parity-tested against the reference), and sklearn-style estimators —
+`FMClassifier` (binary + multiclass softmax), `FMRegressor`, and
+`FFMClassifier` (binary) — with `sample_weight`/`class_weight`,
+`label_smoothing`, early stopping, a `CategoricalEncoder`, and
+`save_model`/`load_model`. Multiclass training currently runs on the NumPy
+reference path (a Rust multiclass kernel, mini-batch, and threaded training are
+v0.2). See `docs/roadmap.md`.
 
-## Planned API
+## Usage
 
 ```python
 from modern_fm import FMClassifier, FFMClassifier
@@ -27,6 +33,12 @@ proba = model.predict_proba(X_test)
 ffm = FFMClassifier(n_factors=8, random_state=42)
 ffm.fit(X_train, y_train, field_ids=field_ids)
 ```
+
+`FMRegressor`, multiclass `FMClassifier` (just pass a target with >2 classes),
+early stopping (`early_stopping=True` or `eval_set=(X_val, y_val)`), and the
+`CategoricalEncoder` are demonstrated in `examples/basic_usage.py`.
+`benchmarks/bench_synthetic.py` reports fit time and predict throughput against
+the NumPy reference floor.
 
 ## Development
 
