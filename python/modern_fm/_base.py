@@ -8,6 +8,7 @@ round-trip them. Phase 3 may swap this for sklearn's BaseEstimator.
 from __future__ import annotations
 
 import inspect
+import pickle
 
 
 class NotFittedError(ValueError, AttributeError):
@@ -49,3 +50,38 @@ class ParamsMixin:
     def __repr__(self):
         args = ", ".join(f"{k}={v!r}" for k, v in self.get_params().items())
         return f"{type(self).__name__}({args})"
+
+
+class ModelIOMixin:
+    """save_model / load_model for fitted estimators.
+
+    Stores `{format_version, class, params, attrs}` via pickle, where `attrs`
+    are the learned trailing-underscore attributes; this is generic over the
+    estimator (binary, regression, multiclass) and round-trips constructor
+    params too. The estimators also pickle natively (plain attributes), so
+    `pickle.dumps(model)` works as an alternative.
+    """
+
+    _IO_VERSION = 1
+
+    def save_model(self, path):
+        check_is_fitted(self)
+        state = {
+            "format_version": self._IO_VERSION,
+            "class": type(self).__name__,
+            "params": self.get_params(),
+            "attrs": {k: getattr(self, k) for k in vars(self) if k.endswith("_")},
+        }
+        with open(path, "wb") as f:
+            pickle.dump(state, f)
+
+    @classmethod
+    def load_model(cls, path):
+        with open(path, "rb") as f:
+            state = pickle.load(f)
+        if state.get("class") != cls.__name__:
+            raise ValueError(f"{path!r} holds a {state.get('class')!r}, not a {cls.__name__!r}")
+        model = cls(**state["params"])
+        for key, value in state["attrs"].items():
+            setattr(model, key, value)
+        return model

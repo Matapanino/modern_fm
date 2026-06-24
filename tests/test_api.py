@@ -92,12 +92,3 @@ def test_multiclass_not_implemented(cls):
     y = np.array([0, 1, 2, 0, 1, 2])
     with pytest.raises(NotImplementedError):
         cls().fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
-
-
-@pytest.mark.parametrize("cls", ESTIMATORS)
-def test_save_load_not_implemented(cls, tmp_path):
-    path = str(tmp_path / "model.bin")
-    with pytest.raises(NotImplementedError):
-        cls().save_model(path)
-    with pytest.raises(NotImplementedError):
-        cls.load_model(path)

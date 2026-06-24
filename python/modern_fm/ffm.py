@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import _backend
-from ._base import ParamsMixin, check_is_fitted
+from ._base import ModelIOMixin, ParamsMixin, check_is_fitted
 from ._reference_train import OPTIMIZERS, init_ffm_params, make_row_orders
 from .fm import _check_binary_classes, _check_X, _combine_weights, _smooth
 from .losses import sigmoid
@@ -23,7 +23,7 @@ from .losses import sigmoid
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
 
 
-class FFMClassifier(ParamsMixin):
+class FFMClassifier(ModelIOMixin, ParamsMixin):
     """Field-aware Factorization Machine binary classifier.
     See docs/api_design.md and docs/math_spec.md."""
 
@@ -148,10 +148,3 @@ class FFMClassifier(ParamsMixin):
         # (predict before fit must raise NotFittedError, not AttributeError).
         scores = self._raw_scores(X)
         return self.classes_[(scores >= 0.0).astype(int)]
-
-    def save_model(self, path):
-        raise NotImplementedError(f"save_model {_PHASE4}")
-
-    @classmethod
-    def load_model(cls, path):
-        raise NotImplementedError(f"load_model {_PHASE4}")

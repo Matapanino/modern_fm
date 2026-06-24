@@ -16,7 +16,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from . import _backend
-from ._base import ParamsMixin, check_is_fitted
+from ._base import ModelIOMixin, ParamsMixin, check_is_fitted
 from ._reference_train import OPTIMIZERS, init_fm_params, make_row_orders
 from .losses import sigmoid
 
@@ -104,7 +104,7 @@ def _smooth(y01, label_smoothing):
     return y01 * (1.0 - label_smoothing) + 0.5 * label_smoothing
 
 
-class _FMBase(ParamsMixin):
+class _FMBase(ModelIOMixin, ParamsMixin):
     def _validate_common(self):
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
@@ -153,13 +153,6 @@ class _FMBase(ParamsMixin):
         check_is_fitted(self)
         X = _check_X(X, self.n_features_in_)
         return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_)
-
-    def save_model(self, path):
-        raise NotImplementedError(f"save_model {_PHASE4}")
-
-    @classmethod
-    def load_model(cls, path):
-        raise NotImplementedError(f"load_model {_PHASE4}")
 
 
 class FMClassifier(_FMBase):
