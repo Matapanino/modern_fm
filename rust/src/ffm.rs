@@ -97,6 +97,7 @@ pub fn predict_csr(
 pub fn fit_csr(
     csr: &CsrView,
     y: &[f64],
+    sample_weight: &[f64],
     field_ids: &[i64],
     w0: &mut f64,
     w: &mut [f64],
@@ -122,7 +123,7 @@ pub fn fit_csr(
         idx_buf.extend(indices.iter().map(|&i| i as usize));
         // pass 1: score from pre-update parameters
         let s = ffm_score_row(&idx_buf, values, field_ids, *w0, w, v, n_fields, k);
-        let g = sigmoid(s) - y[r as usize];
+        let g = sample_weight[r as usize] * (sigmoid(s) - y[r as usize]);
         apply_update(w0, g, &mut acc_w0, lr, opt);
         for (&i, &x) in idx_buf.iter().zip(values) {
             let grad = g * x + l2_linear * w[i];
@@ -220,7 +221,7 @@ mod tests {
         let before = loss(w0, &w, &v);
         let orders: Vec<i64> = (0..30).flat_map(|_| [0i64, 1]).collect();
         fit_csr(
-            &csr, &y, &field_ids, &mut w0, &mut w, &mut v, 2, 2,
+            &csr, &y, &[1.0, 1.0], &field_ids, &mut w0, &mut w, &mut v, 2, 2,
             Optimizer::Adagrad, 0.1, 0.0, 0.0, &orders,
         );
         assert!(loss(w0, &w, &v) < 0.5 * before);

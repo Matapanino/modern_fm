@@ -78,11 +78,14 @@ def fm_fit_reference(
     l2_linear=0.0,
     l2_factors=0.0,
     row_orders=None,
+    sample_weight=None,
 ):
     """Train an FM from `params` = (w0, w, V); returns new (w0, w, V) copies.
 
-    For logistic loss, y must be 0/1. CSR input must be canonical
-    (no duplicate column indices within a row).
+    For logistic loss, y must be 0/1 (label smoothing produces a soft target in
+    [0, 1], which is also fine). `sample_weight` scales each row's gradient
+    (batch_size=1); L2 is unscaled. CSR input must be canonical (no duplicate
+    column indices within a row).
     """
     _check_loss_optimizer(loss, optimizer)
     w0, w, V = params
@@ -91,6 +94,11 @@ def fm_fit_reference(
     V = np.array(V, dtype=np.float64, copy=True)
     y = np.asarray(y, dtype=np.float64)
     rows = list(_as_dense_rows(X))
+    sw = (
+        np.ones(len(rows))
+        if sample_weight is None
+        else np.asarray(sample_weight, dtype=np.float64)
+    )
     if row_orders is None:
         row_orders = np.arange(len(rows))[None, :]
     logistic = loss == "logistic"
@@ -106,6 +114,7 @@ def fm_fit_reference(
             cache = Vi.T @ val  # (k,) = sum_i v_{i,f} x_i
             s = w0 + w[idx] @ val + 0.5 * (cache @ cache - ((Vi * val[:, None]) ** 2).sum())
             g = (_sigmoid(s) - y[r]) if logistic else (s - y[r])
+            g *= sw[r]
             g_w = g * val + l2_linear * w[idx]
             g_V = g * (val[:, None] * cache[None, :] - Vi * (val**2)[:, None]) + l2_factors * Vi
             if adagrad:
@@ -133,10 +142,12 @@ def ffm_fit_reference(
     l2_linear=0.0,
     l2_factors=0.0,
     row_orders=None,
+    sample_weight=None,
 ):
     """Train an FFM (logistic loss) from `params` = (w0, w, V); returns copies.
 
-    V has shape (n_features, n_fields, k). y must be 0/1.
+    V has shape (n_features, n_fields, k). y must be 0/1 (or a soft target in
+    [0, 1]). `sample_weight` scales each row's gradient (batch_size=1).
     """
     _check_loss_optimizer("logistic", optimizer)
     field_ids = np.asarray(field_ids, dtype=np.int64)
@@ -147,6 +158,11 @@ def ffm_fit_reference(
     y = np.asarray(y, dtype=np.float64)
     n_fields, k = V.shape[1], V.shape[2]
     rows = list(_as_dense_rows(X))
+    sw = (
+        np.ones(len(rows))
+        if sample_weight is None
+        else np.asarray(sample_weight, dtype=np.float64)
+    )
     if row_orders is None:
         row_orders = np.arange(len(rows))[None, :]
     adagrad = optimizer == "adagrad"
@@ -164,7 +180,7 @@ def ffm_fit_reference(
             for a in range(z):
                 for b in range(a + 1, z):
                     s += (V[idx[a], f[b]] @ V[idx[b], f[a]]) * val[a] * val[b]
-            g = _sigmoid(s) - y[r]
+            g = (_sigmoid(s) - y[r]) * sw[r]
             g_w = g * val + l2_linear * w[idx]
             # pass 2: accumulate V gradients per touched (feature, field) slot
             gV = np.zeros((z, n_fields, k))

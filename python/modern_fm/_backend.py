@@ -89,42 +89,51 @@ def _prep_fit(X, y, params, row_orders):
     return _prep_csr(Xc), y, float(w0), w, V, row_orders
 
 
-def fm_fit(X, y, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders):
+def fm_fit(
+    X, y, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
+    sample_weight=None,
+):
     """Train an FM with batch_size=1 (docs/optimization_spec.md).
 
     `params` = (w0, w, V) initial values (unchanged); returns new float64
-    (w0, w, V). Rust-accelerated when available, reference fallback otherwise.
+    (w0, w, V). `sample_weight` scales each row's gradient (None -> all ones).
+    Rust-accelerated when available, reference fallback otherwise.
     """
     if _rust is None:
         return _reference_train.fm_fit_reference(
             X, y, params, loss=loss, optimizer=optimizer, learning_rate=learning_rate,
             l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
+            sample_weight=sample_weight,
         )
     (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
         X, y, params, row_orders
     )
+    sw = np.ones(len(y)) if sample_weight is None else _prep_vec(sample_weight)
     w0 = _rust.fm_fit_csr(
-        indptr, indices, data, n_features, y, w0, w, V,
+        indptr, indices, data, n_features, y, sw, w0, w, V,
         loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     )
     return w0, w, V
 
 
 def ffm_fit(
-    X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders
+    X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
+    sample_weight=None,
 ):
     """Train an FFM (logistic loss) with batch_size=1; see fm_fit."""
     if _rust is None:
         return _reference_train.ffm_fit_reference(
             X, y, field_ids, params, optimizer=optimizer, learning_rate=learning_rate,
             l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
+            sample_weight=sample_weight,
         )
     field_ids = _prep_vec(field_ids, dtype=np.int64)
     (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
         X, y, params, row_orders
     )
+    sw = np.ones(len(y)) if sample_weight is None else _prep_vec(sample_weight)
     w0 = _rust.ffm_fit_csr(
-        indptr, indices, data, n_features, y, field_ids, w0, w, V,
+        indptr, indices, data, n_features, y, sw, field_ids, w0, w, V,
         optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     )
     return w0, w, V

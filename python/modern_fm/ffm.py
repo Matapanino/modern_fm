@@ -17,7 +17,7 @@ import numpy as np
 from . import _backend
 from ._base import ParamsMixin, check_is_fitted
 from ._reference_train import OPTIMIZERS, init_ffm_params, make_row_orders
-from .fm import _check_binary_classes, _check_X
+from .fm import _check_binary_classes, _check_X, _combine_weights, _smooth
 from .losses import sigmoid
 
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
@@ -87,14 +87,8 @@ class FFMClassifier(ParamsMixin):
             raise NotImplementedError(f"mini-batch training (batch_size != 1) {_PHASE4}")
         if self.early_stopping:
             raise NotImplementedError(f"early_stopping {_PHASE4}")
-        if sample_weight is not None:
-            raise NotImplementedError(f"sample_weight {_PHASE4}")
         if eval_set is not None:
             raise NotImplementedError(f"eval_set {_PHASE4}")
-        if self.class_weight is not None:
-            raise NotImplementedError(f"class_weight {_PHASE4}")
-        if self.label_smoothing != 0.0:
-            raise NotImplementedError(f"label_smoothing {_PHASE4}")
         if self.loss == "softmax":
             raise NotImplementedError(f"multiclass (softmax) {_PHASE4}")
         if self.loss != "logistic":
@@ -113,6 +107,7 @@ class FFMClassifier(ParamsMixin):
         self.classes_, y01 = _check_binary_classes(np.asarray(y))
         self.field_ids_ = field_ids
         self.n_fields_ = int(field_ids.max()) + 1
+        sw = _combine_weights(y01, self.classes_, sample_weight, self.class_weight, n_rows)
 
         rng = np.random.default_rng(self.random_state)
         params = init_ffm_params(
@@ -120,12 +115,13 @@ class FFMClassifier(ParamsMixin):
         )
         row_orders = make_row_orders(rng, n_rows, self.max_iter)
         w0, w, V = _backend.ffm_fit(
-            X, y01, field_ids, params,
+            X, _smooth(y01, self.label_smoothing), field_ids, params,
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             l2_linear=self.l2_linear,
             l2_factors=self.l2_factors,
             row_orders=row_orders,
+            sample_weight=sw,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
         self.w0_ = float(w0)

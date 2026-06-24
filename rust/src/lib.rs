@@ -41,10 +41,23 @@ fn parse_optimizer(s: &str) -> PyResult<Optimizer> {
     }
 }
 
-fn check_fit_args(csr: &CsrView, y: &[f64], row_orders_shape: &[usize], ro: &[i64]) -> Result<(), String> {
+fn check_fit_args(
+    csr: &CsrView,
+    y: &[f64],
+    sample_weight: &[f64],
+    row_orders_shape: &[usize],
+    ro: &[i64],
+) -> Result<(), String> {
     let n_rows = csr.n_rows();
     if y.len() != n_rows {
         return Err(format!("y length {} != n_rows {}", y.len(), n_rows));
+    }
+    if sample_weight.len() != n_rows {
+        return Err(format!(
+            "sample_weight length {} != n_rows {}",
+            sample_weight.len(),
+            n_rows
+        ));
     }
     if row_orders_shape[1] != n_rows {
         return Err(format!(
@@ -172,6 +185,7 @@ fn fm_fit_csr<'py>(
     data: PyReadonlyArray1<'py, f64>,
     n_features: usize,
     y: PyReadonlyArray1<'py, f64>,
+    sample_weight: PyReadonlyArray1<'py, f64>,
     w0: f64,
     mut w: PyReadwriteArray1<'py, f64>,
     mut v: PyReadwriteArray2<'py, f64>,
@@ -189,6 +203,7 @@ fn fm_fit_csr<'py>(
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
     let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
     let y_s = y.as_slice()?;
+    let sw_s = sample_weight.as_slice()?;
     let ro = row_orders.as_slice()?;
     let w_s = w.as_slice_mut()?;
     if w_s.len() != n_features || v_rows != n_features {
@@ -200,10 +215,11 @@ fn fm_fit_csr<'py>(
     let v_s = v.as_slice_mut()?;
     let out = py.allow_threads(|| -> Result<f64, String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
-        check_fit_args(&csr, y_s, &ro_shape, ro)?;
+        check_fit_args(&csr, y_s, sw_s, &ro_shape, ro)?;
         let mut w0 = w0;
         fm::fit_csr(
-            &csr, y_s, &mut w0, w_s, v_s, k, loss, opt, learning_rate, l2_linear, l2_factors, ro,
+            &csr, y_s, sw_s, &mut w0, w_s, v_s, k, loss, opt, learning_rate, l2_linear, l2_factors,
+            ro,
         );
         Ok(w0)
     });
@@ -221,6 +237,7 @@ fn ffm_fit_csr<'py>(
     data: PyReadonlyArray1<'py, f64>,
     n_features: usize,
     y: PyReadonlyArray1<'py, f64>,
+    sample_weight: PyReadonlyArray1<'py, f64>,
     field_ids: PyReadonlyArray1<'py, i64>,
     w0: f64,
     mut w: PyReadwriteArray1<'py, f64>,
@@ -236,6 +253,7 @@ fn ffm_fit_csr<'py>(
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
     let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
     let y_s = y.as_slice()?;
+    let sw_s = sample_weight.as_slice()?;
     let ro = row_orders.as_slice()?;
     let field_ids_s = field_ids.as_slice()?;
     let w_s = w.as_slice_mut()?;
@@ -249,10 +267,10 @@ fn ffm_fit_csr<'py>(
     let v_s = v.as_slice_mut()?;
     let out = py.allow_threads(|| -> Result<f64, String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
-        check_fit_args(&csr, y_s, &ro_shape, ro)?;
+        check_fit_args(&csr, y_s, sw_s, &ro_shape, ro)?;
         let mut w0 = w0;
         ffm::fit_csr(
-            &csr, y_s, field_ids_s, &mut w0, w_s, v_s, n_fields, k, opt, learning_rate,
+            &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, n_fields, k, opt, learning_rate,
             l2_linear, l2_factors, ro,
         );
         Ok(w0)

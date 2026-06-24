@@ -75,6 +75,7 @@ pub fn predict_csr(csr: &CsrView, w0: f64, w: &[f64], v: &[f64], k: usize) -> Ve
 pub fn fit_csr(
     csr: &CsrView,
     y: &[f64],
+    sample_weight: &[f64],
     w0: &mut f64,
     w: &mut [f64],
     v: &mut [f64],
@@ -108,7 +109,7 @@ pub fn fit_csr(
         }
         let dot: f64 = cache.iter().map(|c| c * c).sum();
         s += 0.5 * (dot - sq);
-        let g = loss_grad(loss, s, y[r as usize]);
+        let g = sample_weight[r as usize] * loss_grad(loss, s, y[r as usize]);
         apply_update(w0, g, &mut acc_w0, lr, opt);
         for (&i, &x) in indices.iter().zip(values) {
             let i = i as usize;
@@ -173,7 +174,7 @@ mod tests {
         let csr = CsrView::new(&indptr, &indices, &data, 1).unwrap();
         let (mut w0, mut w, mut v) = (0.0, vec![0.0], vec![0.0]);
         fit_csr(
-            &csr, &[1.0], &mut w0, &mut w, &mut v, 1,
+            &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, 1,
             Loss::Logistic, Optimizer::Sgd, 1.0, 0.0, 0.0, &[0],
         );
         assert!((w0 - 0.5).abs() < 1e-15);

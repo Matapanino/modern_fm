@@ -106,3 +106,51 @@ def test_rust_fit_rejects_bad_row_orders(rng):
             X, y, params, loss="logistic", optimizer="sgd", learning_rate=0.1,
             l2_linear=0.0, l2_factors=0.0, row_orders=bad,
         )
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+def test_fm_training_parity_sample_weight(rng, optimizer):
+    n, d, k = 35, 9, 3
+    X = random_sparse_dense_X(rng, n, d, density=0.4)
+    y = (rng.random(n) > 0.5).astype(np.float64)
+    sw = rng.uniform(0.1, 3.0, size=n)
+    params = init_fm_params(rng, d, k, 0.05)
+    kwargs = dict(
+        loss="logistic", optimizer=optimizer, learning_rate=0.1,
+        l2_linear=1e-3, l2_factors=1e-3,
+        row_orders=make_row_orders(rng, n, epochs=3), sample_weight=sw,
+    )
+    _assert_params_close(
+        _backend.fm_fit(X, y, params, **kwargs),
+        fm_fit_reference(X, y, params, **kwargs),
+    )
+
+
+def test_ffm_training_parity_sample_weight(rng):
+    n, d, n_fields, k = 25, 7, 3, 2
+    X = random_sparse_dense_X(rng, n, d, density=0.5)
+    y = (rng.random(n) > 0.5).astype(np.float64)
+    field_ids = rng.integers(0, n_fields, size=d)
+    sw = rng.uniform(0.1, 3.0, size=n)
+    params = init_ffm_params(rng, d, n_fields, k, 0.05)
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        row_orders=make_row_orders(rng, n, epochs=2), sample_weight=sw,
+    )
+    _assert_params_close(
+        _backend.ffm_fit(X, y, field_ids, params, **kwargs),
+        ffm_fit_reference(X, y, field_ids, params, **kwargs),
+    )
+
+
+def test_rust_fit_rejects_bad_sample_weight_length(rng):
+    n, d, k = 6, 4, 2
+    X = random_sparse_dense_X(rng, n, d)
+    y = np.zeros(n)
+    params = init_fm_params(rng, d, k, 0.05)
+    with pytest.raises(ValueError):
+        _backend.fm_fit(
+            X, y, params, loss="logistic", optimizer="sgd", learning_rate=0.1,
+            l2_linear=0.0, l2_factors=0.0, row_orders=make_row_orders(rng, n, epochs=1),
+            sample_weight=np.ones(n + 1),
+        )
