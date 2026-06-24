@@ -3,6 +3,19 @@ import pytest
 from modern_fm import FFMClassifier, FMClassifier, FMRegressor
 
 ESTIMATORS = [FMClassifier, FMRegressor, FFMClassifier]
+CLASSIFIERS = [FMClassifier, FFMClassifier]
+
+
+def _tiny_binary(n=6, d=3):
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(n, d))
+    y = np.array([0, 1] * (n // 2))
+    return X, y
+
+
+def _ffm_kwargs(cls, n_features):
+    """field_ids kwarg required by FFMClassifier.fit, empty for FM estimators."""
+    return {"field_ids": np.zeros(n_features, dtype=int)} if cls is FFMClassifier else {}
 
 
 @pytest.mark.parametrize("cls", ESTIMATORS)
@@ -45,10 +58,50 @@ def test_ffm_fit_requires_field_ids():
         FFMClassifier().fit(X, y)
 
 
+# fit is implemented for FM binary/regression and FFM binary (Phase 2B). The
+# guards below cover the v0.1 features that are not wired up yet; each lands in
+# a later phase (docs/roadmap.md) and its guard test moves from "raises" to
+# "works" then.
+
+
 @pytest.mark.parametrize("cls", ESTIMATORS)
-def test_fit_not_implemented_yet(cls):
-    X = np.zeros((4, 3))
-    y = np.array([0, 1, 0, 1])
-    kwargs = {"field_ids": np.zeros(3, dtype=int)} if cls is FFMClassifier else {}
+@pytest.mark.parametrize("ctor", [{"batch_size": 2}, {"early_stopping": True}])
+def test_unimplemented_ctor_options_raise(cls, ctor):
+    X, y = _tiny_binary()
     with pytest.raises(NotImplementedError):
-        cls().fit(X, y, **kwargs)
+        cls(**ctor).fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
+
+
+@pytest.mark.parametrize("cls", ESTIMATORS)
+@pytest.mark.parametrize("fit_kw", [{"sample_weight": np.ones(6)}, {"eval_set": ()}])
+def test_unimplemented_fit_args_raise(cls, fit_kw):
+    X, y = _tiny_binary()
+    with pytest.raises(NotImplementedError):
+        cls().fit(X, y, **_ffm_kwargs(cls, X.shape[1]), **fit_kw)
+
+
+@pytest.mark.parametrize("cls", CLASSIFIERS)
+@pytest.mark.parametrize(
+    "ctor", [{"class_weight": "balanced"}, {"label_smoothing": 0.1}, {"loss": "softmax"}]
+)
+def test_unimplemented_classifier_options_raise(cls, ctor):
+    X, y = _tiny_binary()
+    with pytest.raises(NotImplementedError):
+        cls(**ctor).fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
+
+
+@pytest.mark.parametrize("cls", CLASSIFIERS)
+def test_multiclass_not_implemented(cls):
+    X, _ = _tiny_binary()
+    y = np.array([0, 1, 2, 0, 1, 2])
+    with pytest.raises(NotImplementedError):
+        cls().fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
+
+
+@pytest.mark.parametrize("cls", ESTIMATORS)
+def test_save_load_not_implemented(cls, tmp_path):
+    path = str(tmp_path / "model.bin")
+    with pytest.raises(NotImplementedError):
+        cls().save_model(path)
+    with pytest.raises(NotImplementedError):
+        cls.load_model(path)

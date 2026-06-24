@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import scipy.sparse as sp
 
-from . import _reference
+from . import _reference, _reference_train
 
 try:
     from . import _rust
@@ -69,3 +69,62 @@ def ffm_predict(X, field_ids, w0, w, V):
             indptr, indices, data, n_features, field_ids, float(w0), w, V
         )
     return _rust.ffm_predict_dense(_prep_dense(X), field_ids, float(w0), w, V)
+
+
+def _prep_fit(X, y, params, row_orders):
+    """Common coercion for the Rust fit entry points.
+
+    Dense X is converted to CSR (exact zeros are skipped either way, matching
+    the reference). Returns fresh float64 copies of w and V that the Rust
+    kernel mutates in place; the caller's `params` are left untouched.
+    """
+    w0, w, V = params
+    w = np.array(w, dtype=np.float64, order="C", copy=True)
+    V = np.array(V, dtype=np.float64, order="C", copy=True)
+    y = _prep_vec(y)
+    row_orders = np.ascontiguousarray(row_orders, dtype=np.int64)
+    if row_orders.ndim == 1:
+        row_orders = row_orders[None, :]
+    Xc = X if sp.issparse(X) else sp.csr_matrix(np.asarray(X, dtype=np.float64))
+    return _prep_csr(Xc), y, float(w0), w, V, row_orders
+
+
+def fm_fit(X, y, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders):
+    """Train an FM with batch_size=1 (docs/optimization_spec.md).
+
+    `params` = (w0, w, V) initial values (unchanged); returns new float64
+    (w0, w, V). Rust-accelerated when available, reference fallback otherwise.
+    """
+    if _rust is None:
+        return _reference_train.fm_fit_reference(
+            X, y, params, loss=loss, optimizer=optimizer, learning_rate=learning_rate,
+            l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
+        )
+    (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
+        X, y, params, row_orders
+    )
+    w0 = _rust.fm_fit_csr(
+        indptr, indices, data, n_features, y, w0, w, V,
+        loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
+    )
+    return w0, w, V
+
+
+def ffm_fit(
+    X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders
+):
+    """Train an FFM (logistic loss) with batch_size=1; see fm_fit."""
+    if _rust is None:
+        return _reference_train.ffm_fit_reference(
+            X, y, field_ids, params, optimizer=optimizer, learning_rate=learning_rate,
+            l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
+        )
+    field_ids = _prep_vec(field_ids, dtype=np.int64)
+    (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
+        X, y, params, row_orders
+    )
+    w0 = _rust.ffm_fit_csr(
+        indptr, indices, data, n_features, y, field_ids, w0, w, V,
+        optimizer, learning_rate, l2_linear, l2_factors, row_orders,
+    )
+    return w0, w, V

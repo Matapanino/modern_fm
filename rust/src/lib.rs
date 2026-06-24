@@ -8,7 +8,7 @@
 
 use numpy::{
     IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
-    PyUntypedArrayMethods,
+    PyReadwriteArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -16,11 +16,46 @@ use pyo3::prelude::*;
 mod data;
 mod ffm;
 mod fm;
+mod optimizer;
 
 use data::CsrView;
+use optimizer::{Loss, Optimizer};
 
 fn val_err(msg: String) -> PyErr {
     PyValueError::new_err(msg)
+}
+
+fn parse_loss(s: &str) -> PyResult<Loss> {
+    match s {
+        "logistic" => Ok(Loss::Logistic),
+        "squared" => Ok(Loss::Squared),
+        _ => Err(val_err(format!("unknown loss {s:?}"))),
+    }
+}
+
+fn parse_optimizer(s: &str) -> PyResult<Optimizer> {
+    match s {
+        "sgd" => Ok(Optimizer::Sgd),
+        "adagrad" => Ok(Optimizer::Adagrad),
+        _ => Err(val_err(format!("unknown optimizer {s:?}"))),
+    }
+}
+
+fn check_fit_args(csr: &CsrView, y: &[f64], row_orders_shape: &[usize], ro: &[i64]) -> Result<(), String> {
+    let n_rows = csr.n_rows();
+    if y.len() != n_rows {
+        return Err(format!("y length {} != n_rows {}", y.len(), n_rows));
+    }
+    if row_orders_shape[1] != n_rows {
+        return Err(format!(
+            "row_orders second dimension {} != n_rows {}",
+            row_orders_shape[1], n_rows
+        ));
+    }
+    if ro.iter().any(|&r| r < 0 || r as usize >= n_rows) {
+        return Err(format!("row_orders entry out of range [0, {n_rows})"));
+    }
+    Ok(())
 }
 
 fn check_w_v_fm(n_features: usize, w: &[f64], v_shape: &[usize]) -> PyResult<()> {
@@ -126,11 +161,112 @@ fn ffm_predict_csr<'py>(
     Ok(out.map_err(val_err)?.into_pyarray(py))
 }
 
+/// Train an FM in place (w, v mutated; new w0 returned). batch_size=1,
+/// single-threaded; see fm::fit_csr and docs/optimization_spec.md.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn fm_fit_csr<'py>(
+    py: Python<'py>,
+    indptr: PyReadonlyArray1<'py, i64>,
+    indices: PyReadonlyArray1<'py, i64>,
+    data: PyReadonlyArray1<'py, f64>,
+    n_features: usize,
+    y: PyReadonlyArray1<'py, f64>,
+    w0: f64,
+    mut w: PyReadwriteArray1<'py, f64>,
+    mut v: PyReadwriteArray2<'py, f64>,
+    loss: &str,
+    optimizer: &str,
+    learning_rate: f64,
+    l2_linear: f64,
+    l2_factors: f64,
+    row_orders: PyReadonlyArray2<'py, i64>,
+) -> PyResult<f64> {
+    let loss = parse_loss(loss)?;
+    let opt = parse_optimizer(optimizer)?;
+    let k = v.shape()[1];
+    let v_rows = v.shape()[0];
+    let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
+    let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
+    let y_s = y.as_slice()?;
+    let ro = row_orders.as_slice()?;
+    let w_s = w.as_slice_mut()?;
+    if w_s.len() != n_features || v_rows != n_features {
+        return Err(val_err(format!(
+            "shape mismatch: n_features={n_features}, w={}, V rows={v_rows}",
+            w_s.len()
+        )));
+    }
+    let v_s = v.as_slice_mut()?;
+    let out = py.allow_threads(|| -> Result<f64, String> {
+        let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
+        check_fit_args(&csr, y_s, &ro_shape, ro)?;
+        let mut w0 = w0;
+        fm::fit_csr(
+            &csr, y_s, &mut w0, w_s, v_s, k, loss, opt, learning_rate, l2_linear, l2_factors, ro,
+        );
+        Ok(w0)
+    });
+    out.map_err(val_err)
+}
+
+/// Train an FFM (logistic loss) in place (w, v mutated; new w0 returned).
+/// batch_size=1, single-threaded; see ffm::fit_csr.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn ffm_fit_csr<'py>(
+    py: Python<'py>,
+    indptr: PyReadonlyArray1<'py, i64>,
+    indices: PyReadonlyArray1<'py, i64>,
+    data: PyReadonlyArray1<'py, f64>,
+    n_features: usize,
+    y: PyReadonlyArray1<'py, f64>,
+    field_ids: PyReadonlyArray1<'py, i64>,
+    w0: f64,
+    mut w: PyReadwriteArray1<'py, f64>,
+    mut v: PyReadwriteArray3<'py, f64>,
+    optimizer: &str,
+    learning_rate: f64,
+    l2_linear: f64,
+    l2_factors: f64,
+    row_orders: PyReadonlyArray2<'py, i64>,
+) -> PyResult<f64> {
+    let opt = parse_optimizer(optimizer)?;
+    let (v_rows, n_fields, k) = (v.shape()[0], v.shape()[1], v.shape()[2]);
+    let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
+    let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
+    let y_s = y.as_slice()?;
+    let ro = row_orders.as_slice()?;
+    let field_ids_s = field_ids.as_slice()?;
+    let w_s = w.as_slice_mut()?;
+    if w_s.len() != n_features || v_rows != n_features {
+        return Err(val_err(format!(
+            "shape mismatch: n_features={n_features}, w={}, V rows={v_rows}",
+            w_s.len()
+        )));
+    }
+    data::check_field_ids(field_ids_s, n_features, n_fields).map_err(val_err)?;
+    let v_s = v.as_slice_mut()?;
+    let out = py.allow_threads(|| -> Result<f64, String> {
+        let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
+        check_fit_args(&csr, y_s, &ro_shape, ro)?;
+        let mut w0 = w0;
+        ffm::fit_csr(
+            &csr, y_s, field_ids_s, &mut w0, w_s, v_s, n_fields, k, opt, learning_rate,
+            l2_linear, l2_factors, ro,
+        );
+        Ok(w0)
+    });
+    out.map_err(val_err)
+}
+
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fm_predict_fast_dense, m)?)?;
     m.add_function(wrap_pyfunction!(fm_predict_fast_csr, m)?)?;
     m.add_function(wrap_pyfunction!(ffm_predict_dense, m)?)?;
     m.add_function(wrap_pyfunction!(ffm_predict_csr, m)?)?;
+    m.add_function(wrap_pyfunction!(fm_fit_csr, m)?)?;
+    m.add_function(wrap_pyfunction!(ffm_fit_csr, m)?)?;
     Ok(())
 }

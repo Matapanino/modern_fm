@@ -10,6 +10,22 @@ from __future__ import annotations
 import inspect
 
 
+class NotFittedError(ValueError, AttributeError):
+    """Raised when a predict-like method is called before fit.
+
+    Inherits ValueError and AttributeError to match sklearn's exception of
+    the same name, so generic sklearn-style error handling keeps working.
+    """
+
+
+def check_is_fitted(estimator, attribute="w0_"):
+    if not hasattr(estimator, attribute):
+        raise NotFittedError(
+            f"This {type(estimator).__name__} instance is not fitted yet; "
+            "call 'fit' before using this method."
+        )
+
+
 class ParamsMixin:
     @classmethod
     def _param_names(cls):

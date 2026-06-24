@@ -1,8 +1,9 @@
 """modern_fm: fast, sklearn-compatible FM / FFM for Python."""
 
+from ._base import NotFittedError
 from .ffm import FFMClassifier
 from .fm import FMClassifier, FMRegressor
 
 __version__ = "0.1.0.dev0"
 
-__all__ = ["FMClassifier", "FMRegressor", "FFMClassifier", "__version__"]
+__all__ = ["FMClassifier", "FMRegressor", "FFMClassifier", "NotFittedError", "__version__"]

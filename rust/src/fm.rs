@@ -4,6 +4,7 @@
 //!       + 0.5 * sum_f [(sum_i v_{i,f} x_i)^2 - sum_i v_{i,f}^2 x_i^2]
 
 use crate::data::{dense_row_nonzeros, CsrView};
+use crate::optimizer::{apply_update, loss_grad, Loss, Optimizer};
 
 /// Score one row given its nonzero (index, value) pairs.
 /// `v` is row-major (n_features, k).
@@ -64,6 +65,67 @@ pub fn predict_csr(csr: &CsrView, w0: f64, w: &[f64], v: &[f64], k: usize) -> Ve
     out
 }
 
+/// Train an FM in place with batch_size=1 (docs/optimization_spec.md).
+///
+/// Mirrors `_reference_train.fm_fit_reference`: per-row gradients from
+/// pre-update parameters, lazy L2, update order w0 -> w -> V. Rows are
+/// visited in the order given by `row_orders` (epochs * n_rows entries,
+/// validated by the caller). For logistic loss, y must be 0/1.
+#[allow(clippy::too_many_arguments)]
+pub fn fit_csr(
+    csr: &CsrView,
+    y: &[f64],
+    w0: &mut f64,
+    w: &mut [f64],
+    v: &mut [f64],
+    k: usize,
+    loss: Loss,
+    opt: Optimizer,
+    lr: f64,
+    l2_linear: f64,
+    l2_factors: f64,
+    row_orders: &[i64],
+) {
+    let mut acc_w0 = 0.0;
+    let mut acc_w = vec![0.0; w.len()];
+    let mut acc_v = vec![0.0; v.len()];
+    let mut cache = vec![0.0; k];
+    for &r in row_orders {
+        let (indices, values) = csr.row(r as usize);
+        // score + factor cache from pre-update parameters
+        cache.fill(0.0);
+        let mut s = *w0;
+        let mut sq = 0.0;
+        for (&i, &x) in indices.iter().zip(values) {
+            let i = i as usize;
+            s += w[i] * x;
+            let vi = &v[i * k..(i + 1) * k];
+            for f in 0..k {
+                let vx = vi[f] * x;
+                cache[f] += vx;
+                sq += vx * vx;
+            }
+        }
+        let dot: f64 = cache.iter().map(|c| c * c).sum();
+        s += 0.5 * (dot - sq);
+        let g = loss_grad(loss, s, y[r as usize]);
+        apply_update(w0, g, &mut acc_w0, lr, opt);
+        for (&i, &x) in indices.iter().zip(values) {
+            let i = i as usize;
+            let grad = g * x + l2_linear * w[i];
+            apply_update(&mut w[i], grad, &mut acc_w[i], lr, opt);
+        }
+        for (&i, &x) in indices.iter().zip(values) {
+            let i = i as usize;
+            for (f, &cache_f) in cache.iter().enumerate() {
+                let vi = i * k + f;
+                let grad = g * (x * cache_f - v[vi] * x * x) + l2_factors * v[vi];
+                apply_update(&mut v[vi], grad, &mut acc_v[vi], lr, opt);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +161,23 @@ mod tests {
     fn zero_row_is_bias() {
         let out = predict_dense(&[0.0, 0.0, 0.0], 1, 3, 1.5, &[1.0; 3], &[1.0; 6], 2);
         assert_eq!(out[0], 1.5);
+    }
+
+    #[test]
+    fn one_sgd_step_hand_computed() {
+        // Single feature x=1, y=1, k=1, V=0, logistic SGD with lr=1:
+        // s=0, g=sigmoid(0)-1=-0.5 -> w0=0.5, w=0.5; V grad is 0 (cache=0, v=0).
+        let indptr = [0i64, 1];
+        let indices = [0i64];
+        let data = [1.0];
+        let csr = CsrView::new(&indptr, &indices, &data, 1).unwrap();
+        let (mut w0, mut w, mut v) = (0.0, vec![0.0], vec![0.0]);
+        fit_csr(
+            &csr, &[1.0], &mut w0, &mut w, &mut v, 1,
+            Loss::Logistic, Optimizer::Sgd, 1.0, 0.0, 0.0, &[0],
+        );
+        assert!((w0 - 0.5).abs() < 1e-15);
+        assert!((w[0] - 0.5).abs() < 1e-15);
+        assert_eq!(v[0], 0.0);
     }
 }
