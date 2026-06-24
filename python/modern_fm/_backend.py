@@ -4,8 +4,9 @@ Private module. The NumPy implementations in `_reference` remain the ground
 truth; the Rust extension (`modern_fm._rust`, built via maturin) is an
 optimized drop-in whose parity is enforced by tests/test_rust_parity.py.
 
-Estimators do not call this yet (training is Phase 2B); only prediction
-plumbing lives here for now.
+Both prediction and training are dispatched here (FM/FFM predict, FM binary and
+multiclass-softmax training, FFM training); training parity with the reference
+trainers is enforced by tests/test_rust_train_parity.py.
 """
 
 from __future__ import annotations
@@ -136,13 +137,34 @@ def fm_fit_multiclass(
     X, y, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     label_smoothing=0.0, sample_weight=None,
 ):
-    """Train a multiclass (softmax) FM. NumPy reference path in v0.1 (no Rust
-    multiclass kernel yet); prediction still uses the Rust per-class kernel."""
-    return _reference_train.fm_fit_multiclass_reference(
-        X, y, params, optimizer=optimizer, learning_rate=learning_rate,
-        l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
-        label_smoothing=label_smoothing, sample_weight=sample_weight,
+    """Train a multiclass (softmax) FM with batch_size=1 (optimization_spec.md).
+
+    `params` = (w0 (C,), w (C, n), V (C, n, k)) initial values (unchanged);
+    `y` holds integer class indices in [0, C). Returns new float64 (w0, w, V).
+    Rust-accelerated when available, NumPy reference fallback otherwise.
+    """
+    if _rust is None:
+        return _reference_train.fm_fit_multiclass_reference(
+            X, y, params, optimizer=optimizer, learning_rate=learning_rate,
+            l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
+            label_smoothing=label_smoothing, sample_weight=sample_weight,
+        )
+    w0, w, V = params
+    w0 = np.array(w0, dtype=np.float64, order="C", copy=True)  # (C,), mutated in place
+    w = np.array(w, dtype=np.float64, order="C", copy=True)  # (C, n)
+    V = np.array(V, dtype=np.float64, order="C", copy=True)  # (C, n, k)
+    y = _prep_vec(y, dtype=np.int64)
+    row_orders = np.ascontiguousarray(row_orders, dtype=np.int64)
+    if row_orders.ndim == 1:
+        row_orders = row_orders[None, :]
+    Xc = X if sp.issparse(X) else sp.csr_matrix(np.asarray(X, dtype=np.float64))
+    indptr, indices, data, n_features = _prep_csr(Xc)
+    sw = np.ones(len(y)) if sample_weight is None else _prep_vec(sample_weight)
+    _rust.fm_fit_multiclass_csr(
+        indptr, indices, data, n_features, y, sw, w0, w, V,
+        optimizer, learning_rate, l2_linear, l2_factors, label_smoothing, row_orders,
     )
+    return w0, w, V
 
 
 def ffm_fit(

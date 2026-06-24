@@ -1,13 +1,14 @@
 """FM estimators (docs/api_design.md).
 
-Binary classification (logistic loss) and regression (squared loss), trained
-through `_backend` (Rust when built, NumPy reference otherwise) with
-batch_size=1, single-threaded. Training always runs in float64; learned
-attributes are stored in the requested `dtype`.
+Binary classification (logistic loss), multiclass classification (softmax loss),
+and regression (squared loss), trained through `_backend` (Rust when built, NumPy
+reference otherwise) with batch_size=1, single-threaded. Supports class_weight,
+sample_weight, label_smoothing, early stopping/eval_set, and save/load. Training
+always runs in float64; learned attributes are stored in the requested `dtype`.
 
-Not implemented yet (raise NotImplementedError at fit time): multiclass,
-mini-batches (batch_size != 1), early stopping, class_weight, sample_weight,
-label_smoothing, save/load. See docs/roadmap.md.
+Not implemented yet (raise NotImplementedError at fit time): mini-batches
+(batch_size != 1), and early stopping combined with multiclass. See
+docs/roadmap.md.
 """
 
 from __future__ import annotations

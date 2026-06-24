@@ -11,8 +11,10 @@ from conftest import random_sparse_dense_X
 from modern_fm import _backend
 from modern_fm._reference_train import (
     ffm_fit_reference,
+    fm_fit_multiclass_reference,
     fm_fit_reference,
     init_ffm_params,
+    init_fm_multiclass_params,
     init_fm_params,
     make_row_orders,
 )
@@ -153,4 +155,94 @@ def test_rust_fit_rejects_bad_sample_weight_length(rng):
             X, y, params, loss="logistic", optimizer="sgd", learning_rate=0.1,
             l2_linear=0.0, l2_factors=0.0, row_orders=make_row_orders(rng, n, epochs=1),
             sample_weight=np.ones(n + 1),
+        )
+
+
+@pytest.mark.parametrize("n_classes", [3, 4])
+@pytest.mark.parametrize("label_smoothing", [0.0, 0.1])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+def test_fm_multiclass_training_parity(rng, optimizer, label_smoothing, n_classes):
+    n, d, k = 40, 10, 3
+    X = random_sparse_dense_X(rng, n, d, density=0.4)
+    y = rng.integers(0, n_classes, size=n)
+    params = init_fm_multiclass_params(rng, n_classes, d, k, 0.05)
+    kwargs = dict(
+        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        row_orders=make_row_orders(rng, n, epochs=3), label_smoothing=label_smoothing,
+    )
+    _assert_params_close(
+        _backend.fm_fit_multiclass(X, y, params, **kwargs),
+        fm_fit_multiclass_reference(X, y, params, **kwargs),
+    )
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad"])
+def test_fm_multiclass_training_parity_sample_weight(rng, optimizer):
+    n, d, k, n_classes = 35, 9, 3, 4
+    X = random_sparse_dense_X(rng, n, d, density=0.4)
+    y = rng.integers(0, n_classes, size=n)
+    sw = rng.uniform(0.1, 3.0, size=n)
+    params = init_fm_multiclass_params(rng, n_classes, d, k, 0.05)
+    kwargs = dict(
+        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        row_orders=make_row_orders(rng, n, epochs=3), sample_weight=sw,
+    )
+    _assert_params_close(
+        _backend.fm_fit_multiclass(X, y, params, **kwargs),
+        fm_fit_multiclass_reference(X, y, params, **kwargs),
+    )
+
+
+def test_fm_multiclass_training_parity_csr_input(rng):
+    n, d, k, n_classes = 30, 8, 2, 3
+    X = random_sparse_dense_X(rng, n, d, density=0.3)
+    y = rng.integers(0, n_classes, size=n)
+    params = init_fm_multiclass_params(rng, n_classes, d, k, 0.05)
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.1, l2_linear=0.0, l2_factors=0.0,
+        row_orders=make_row_orders(rng, n, epochs=2),
+    )
+    _assert_params_close(
+        _backend.fm_fit_multiclass(sp.csr_matrix(X), y, params, **kwargs),
+        fm_fit_multiclass_reference(X, y, params, **kwargs),
+    )
+
+
+def test_fm_multiclass_fit_does_not_mutate_input_params(rng):
+    n, d, k, n_classes = 10, 5, 2, 3
+    X = random_sparse_dense_X(rng, n, d)
+    y = rng.integers(0, n_classes, size=n)
+    params = init_fm_multiclass_params(rng, n_classes, d, k, 0.05)
+    before = [p.copy() for p in params]
+    _backend.fm_fit_multiclass(
+        X, y, params, optimizer="adagrad", learning_rate=0.1, l2_linear=0.0,
+        l2_factors=0.0, row_orders=make_row_orders(rng, n, epochs=1),
+    )
+    for p, p0 in zip(params, before):
+        np.testing.assert_array_equal(p, p0)
+
+
+def test_rust_multiclass_fit_rejects_bad_row_orders(rng):
+    n, d, k, n_classes = 6, 4, 2, 3
+    X = random_sparse_dense_X(rng, n, d)
+    y = rng.integers(0, n_classes, size=n)
+    params = init_fm_multiclass_params(rng, n_classes, d, k, 0.05)
+    bad = np.full((1, n), n, dtype=np.int64)  # out of range
+    with pytest.raises(ValueError):
+        _backend.fm_fit_multiclass(
+            X, y, params, optimizer="sgd", learning_rate=0.1, l2_linear=0.0,
+            l2_factors=0.0, row_orders=bad,
+        )
+
+
+def test_rust_multiclass_fit_rejects_bad_class_index(rng):
+    n, d, k, n_classes = 6, 4, 2, 3
+    X = random_sparse_dense_X(rng, n, d)
+    y = rng.integers(0, n_classes, size=n)
+    y[0] = n_classes  # out of range [0, n_classes)
+    params = init_fm_multiclass_params(rng, n_classes, d, k, 0.05)
+    with pytest.raises(ValueError):
+        _backend.fm_fit_multiclass(
+            X, y, params, optimizer="sgd", learning_rate=0.1, l2_linear=0.0,
+            l2_factors=0.0, row_orders=make_row_orders(rng, n, epochs=1),
         )

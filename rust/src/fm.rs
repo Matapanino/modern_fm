@@ -65,6 +65,75 @@ pub fn predict_csr(csr: &CsrView, w0: f64, w: &[f64], v: &[f64], k: usize) -> Ve
     out
 }
 
+/// Score one CSR row from pre-update params, filling `cache[f] = sum_i v_{i,f} x_i`.
+///
+/// Uses the `(dot - sq)` accumulation order shared with the Python reference
+/// (`cache @ cache - sum((Vi*val)^2)`), so binary and multiclass training stay
+/// bit-parity with `_reference_train`. Indices are CSR (i64) column ids.
+fn train_score_row(
+    indices: &[i64],
+    values: &[f64],
+    w0: f64,
+    w: &[f64],
+    v: &[f64],
+    k: usize,
+    cache: &mut [f64],
+) -> f64 {
+    cache.fill(0.0);
+    let mut s = w0;
+    let mut sq = 0.0;
+    for (&i, &x) in indices.iter().zip(values) {
+        let i = i as usize;
+        s += w[i] * x;
+        let vi = &v[i * k..(i + 1) * k];
+        for f in 0..k {
+            let vx = vi[f] * x;
+            cache[f] += vx;
+            sq += vx * vx;
+        }
+    }
+    let dot: f64 = cache.iter().map(|c| c * c).sum();
+    s + 0.5 * (dot - sq)
+}
+
+/// Apply one row's FM gradient to (w0, w, V) with lazy L2 and update order
+/// w0 -> w -> V. `g` is the loss derivative dL/ds (already weighted); `cache`
+/// is the factor-sum vector from `train_score_row`. Shared by binary and
+/// multiclass training.
+#[allow(clippy::too_many_arguments)]
+fn update_row(
+    indices: &[i64],
+    values: &[f64],
+    g: f64,
+    cache: &[f64],
+    w0: &mut f64,
+    w: &mut [f64],
+    v: &mut [f64],
+    acc_w0: &mut f64,
+    acc_w: &mut [f64],
+    acc_v: &mut [f64],
+    k: usize,
+    opt: Optimizer,
+    lr: f64,
+    l2_linear: f64,
+    l2_factors: f64,
+) {
+    apply_update(w0, g, acc_w0, lr, opt);
+    for (&i, &x) in indices.iter().zip(values) {
+        let i = i as usize;
+        let grad = g * x + l2_linear * w[i];
+        apply_update(&mut w[i], grad, &mut acc_w[i], lr, opt);
+    }
+    for (&i, &x) in indices.iter().zip(values) {
+        let i = i as usize;
+        for (f, &cache_f) in cache.iter().enumerate() {
+            let vi = i * k + f;
+            let grad = g * (x * cache_f - v[vi] * x * x) + l2_factors * v[vi];
+            apply_update(&mut v[vi], grad, &mut acc_v[vi], lr, opt);
+        }
+    }
+}
+
 /// Train an FM in place with batch_size=1 (docs/optimization_spec.md).
 ///
 /// Mirrors `_reference_train.fm_fit_reference`: per-row gradients from
@@ -93,36 +162,95 @@ pub fn fit_csr(
     let mut cache = vec![0.0; k];
     for &r in row_orders {
         let (indices, values) = csr.row(r as usize);
-        // score + factor cache from pre-update parameters
-        cache.fill(0.0);
-        let mut s = *w0;
-        let mut sq = 0.0;
-        for (&i, &x) in indices.iter().zip(values) {
-            let i = i as usize;
-            s += w[i] * x;
-            let vi = &v[i * k..(i + 1) * k];
-            for f in 0..k {
-                let vx = vi[f] * x;
-                cache[f] += vx;
-                sq += vx * vx;
-            }
-        }
-        let dot: f64 = cache.iter().map(|c| c * c).sum();
-        s += 0.5 * (dot - sq);
+        let s = train_score_row(indices, values, *w0, w, v, k, &mut cache);
         let g = sample_weight[r as usize] * loss_grad(loss, s, y[r as usize]);
-        apply_update(w0, g, acc_w0, lr, opt);
-        for (&i, &x) in indices.iter().zip(values) {
-            let i = i as usize;
-            let grad = g * x + l2_linear * w[i];
-            apply_update(&mut w[i], grad, &mut acc_w[i], lr, opt);
+        update_row(
+            indices, values, g, &cache, w0, w, v, acc_w0, acc_w, acc_v, k, opt, lr,
+            l2_linear, l2_factors,
+        );
+    }
+}
+
+/// Train a multiclass (softmax) FM in place with batch_size=1.
+///
+/// Mirrors `_reference_train.fm_fit_multiclass_reference`: one FM per class,
+/// coupled only through the softmax gradient `sample_weight * (p_c - target_c)`
+/// (target uses label smoothing: `1 - eps` for the true class, `eps / (C - 1)`
+/// otherwise). Per-class logits and factor caches are computed from pre-update
+/// parameters, then every class is updated. `w0` is (C,), `w` is row-major
+/// (C, n_features), `v` is row-major (C, n_features, k); `y` holds class indices
+/// in [0, n_classes). AdaGrad accumulators are internal and span all epochs in
+/// `row_orders` (no early-stopping state hand-off in v0.1).
+#[allow(clippy::too_many_arguments)]
+pub fn fit_multiclass_csr(
+    csr: &CsrView,
+    y: &[i64],
+    sample_weight: &[f64],
+    w0: &mut [f64],
+    w: &mut [f64],
+    v: &mut [f64],
+    n_classes: usize,
+    n_features: usize,
+    k: usize,
+    opt: Optimizer,
+    lr: f64,
+    l2_linear: f64,
+    l2_factors: f64,
+    label_smoothing: f64,
+    row_orders: &[i64],
+) {
+    let n = n_features;
+    let mut acc_w0 = vec![0.0; n_classes];
+    let mut acc_w = vec![0.0; n_classes * n];
+    let mut acc_v = vec![0.0; n_classes * n * k];
+    let off = if n_classes > 1 {
+        label_smoothing / (n_classes as f64 - 1.0)
+    } else {
+        0.0
+    };
+    let mut probs = vec![0.0; n_classes]; // logits, then exp(.), then probabilities
+    let mut caches = vec![0.0; n_classes * k];
+    let mut cache = vec![0.0; k];
+    for &r in row_orders {
+        let (indices, values) = csr.row(r as usize);
+        let yc = y[r as usize] as usize;
+        let sw = sample_weight[r as usize];
+        // pass 1: per-class logit + factor cache from pre-update parameters
+        for c in 0..n_classes {
+            let w_c = &w[c * n..(c + 1) * n];
+            let v_c = &v[c * n * k..(c + 1) * n * k];
+            probs[c] = train_score_row(indices, values, w0[c], w_c, v_c, k, &mut cache);
+            caches[c * k..(c + 1) * k].copy_from_slice(&cache);
         }
-        for (&i, &x) in indices.iter().zip(values) {
-            let i = i as usize;
-            for (f, &cache_f) in cache.iter().enumerate() {
-                let vi = i * k + f;
-                let grad = g * (x * cache_f - v[vi] * x * x) + l2_factors * v[vi];
-                apply_update(&mut v[vi], grad, &mut acc_v[vi], lr, opt);
-            }
+        // stable softmax: subtract max, sum exp in class order
+        let maxl = probs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let mut sum_ex = 0.0;
+        for p in probs.iter_mut() {
+            *p = (*p - maxl).exp();
+            sum_ex += *p;
+        }
+        // pass 2: per-class softmax-gradient update
+        for c in 0..n_classes {
+            let p = probs[c] / sum_ex;
+            let target = if c == yc { 1.0 - label_smoothing } else { off };
+            let g = sw * (p - target);
+            update_row(
+                indices,
+                values,
+                g,
+                &caches[c * k..(c + 1) * k],
+                &mut w0[c],
+                &mut w[c * n..(c + 1) * n],
+                &mut v[c * n * k..(c + 1) * n * k],
+                &mut acc_w0[c],
+                &mut acc_w[c * n..(c + 1) * n],
+                &mut acc_v[c * n * k..(c + 1) * n * k],
+                k,
+                opt,
+                lr,
+                l2_linear,
+                l2_factors,
+            );
         }
     }
 }
@@ -181,5 +309,29 @@ mod tests {
         assert!((w0 - 0.5).abs() < 1e-15);
         assert!((w[0] - 0.5).abs() < 1e-15);
         assert_eq!(v[0], 0.0);
+    }
+
+    #[test]
+    fn multiclass_one_sgd_step_hand_computed() {
+        // 2 classes, 1 feature x=1, k=1, all params 0, y=class 0, eps=0, SGD lr=1.
+        // logits=[0,0] -> p=[0.5,0.5]; g0=0.5-1=-0.5, g1=0.5-0=0.5.
+        // w0 -= lr*g -> [0.5,-0.5]; w -= lr*(g*x) -> [0.5,-0.5]; V grad is 0 (cache=0).
+        let indptr = [0i64, 1];
+        let indices = [0i64];
+        let data = [1.0];
+        let csr = CsrView::new(&indptr, &indices, &data, 1).unwrap();
+        let mut w0 = vec![0.0, 0.0];
+        let mut w = vec![0.0, 0.0]; // (C=2, n=1)
+        let mut v = vec![0.0, 0.0]; // (C=2, n=1, k=1)
+        fit_multiclass_csr(
+            &csr, &[0], &[1.0], &mut w0, &mut w, &mut v, 2, 1, 1, Optimizer::Sgd, 1.0,
+            0.0, 0.0, 0.0, &[0],
+        );
+        assert!((w0[0] - 0.5).abs() < 1e-15);
+        assert!((w0[1] + 0.5).abs() < 1e-15);
+        assert!((w[0] - 0.5).abs() < 1e-15);
+        assert!((w[1] + 0.5).abs() < 1e-15);
+        assert_eq!(v[0], 0.0);
+        assert_eq!(v[1], 0.0);
     }
 }

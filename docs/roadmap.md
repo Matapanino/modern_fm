@@ -29,8 +29,9 @@
 ## v0.2 — Training quality & throughput
 
 - FTRL optimizer, Adam
-- Rust multiclass-softmax training kernel (v0.1 trains multiclass on the NumPy
-  reference); mini-batch (`batch_size > 1`); `rayon` row-parallelism (`n_jobs > 1`)
+- [x] Rust multiclass-softmax training kernel (`fm_fit_multiclass_csr`),
+  parity-tested vs the NumPy reference (done ahead of v0.2)
+- mini-batch (`batch_size > 1`); `rayon` row-parallelism (`n_jobs > 1`)
 - full sklearn `check_estimator` compatibility
 - `partial_fit`, `warm_start=True`
 - pairwise dropout, interaction pruning

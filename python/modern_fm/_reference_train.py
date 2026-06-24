@@ -163,7 +163,7 @@ def fm_fit_multiclass_reference(
     sample_weight * (p_c - target_c), where target uses label smoothing
     (target_c = 1-eps if c == y else eps/(C-1)). Per-class FM updates reuse the
     binary FM gradient; classes share no parameters. NumPy ground truth for the
-    estimator's multiclass path (no Rust kernel in v0.1).
+    Rust `fm_fit_multiclass_csr` kernel (parity in tests/test_rust_train_parity.py).
     """
     if optimizer not in OPTIMIZERS:
         raise ValueError(f"unknown optimizer {optimizer!r}; expected one of {OPTIMIZERS}")

@@ -41,17 +41,12 @@ fn parse_optimizer(s: &str) -> PyResult<Optimizer> {
     }
 }
 
-fn check_fit_args(
-    csr: &CsrView,
-    y: &[f64],
+fn check_sw_ro(
+    n_rows: usize,
     sample_weight: &[f64],
     row_orders_shape: &[usize],
     ro: &[i64],
 ) -> Result<(), String> {
-    let n_rows = csr.n_rows();
-    if y.len() != n_rows {
-        return Err(format!("y length {} != n_rows {}", y.len(), n_rows));
-    }
     if sample_weight.len() != n_rows {
         return Err(format!(
             "sample_weight length {} != n_rows {}",
@@ -69,6 +64,38 @@ fn check_fit_args(
         return Err(format!("row_orders entry out of range [0, {n_rows})"));
     }
     Ok(())
+}
+
+fn check_fit_args(
+    csr: &CsrView,
+    y: &[f64],
+    sample_weight: &[f64],
+    row_orders_shape: &[usize],
+    ro: &[i64],
+) -> Result<(), String> {
+    let n_rows = csr.n_rows();
+    if y.len() != n_rows {
+        return Err(format!("y length {} != n_rows {}", y.len(), n_rows));
+    }
+    check_sw_ro(n_rows, sample_weight, row_orders_shape, ro)
+}
+
+fn check_fit_args_mc(
+    csr: &CsrView,
+    y: &[i64],
+    n_classes: usize,
+    sample_weight: &[f64],
+    row_orders_shape: &[usize],
+    ro: &[i64],
+) -> Result<(), String> {
+    let n_rows = csr.n_rows();
+    if y.len() != n_rows {
+        return Err(format!("y length {} != n_rows {}", y.len(), n_rows));
+    }
+    if y.iter().any(|&c| c < 0 || c as usize >= n_classes) {
+        return Err(format!("class index out of range [0, {n_classes})"));
+    }
+    check_sw_ro(n_rows, sample_weight, row_orders_shape, ro)
 }
 
 fn check_w_v_fm(n_features: usize, w: &[f64], v_shape: &[usize]) -> PyResult<()> {
@@ -237,6 +264,60 @@ fn fm_fit_csr<'py>(
     out.map_err(val_err)
 }
 
+/// Train a multiclass (softmax) FM in place; w0 (C,), w (C, n_features) and
+/// v (C, n_features, k) are all mutated. `y` holds class indices in [0, C).
+/// AdaGrad accumulators are internal (all epochs in one call, no early-stopping
+/// state). batch_size=1, single-threaded; see fm::fit_multiclass_csr.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn fm_fit_multiclass_csr<'py>(
+    py: Python<'py>,
+    indptr: PyReadonlyArray1<'py, i64>,
+    indices: PyReadonlyArray1<'py, i64>,
+    data: PyReadonlyArray1<'py, f64>,
+    n_features: usize,
+    y: PyReadonlyArray1<'py, i64>,
+    sample_weight: PyReadonlyArray1<'py, f64>,
+    mut w0: PyReadwriteArray1<'py, f64>,
+    mut w: PyReadwriteArray2<'py, f64>,
+    mut v: PyReadwriteArray3<'py, f64>,
+    optimizer: &str,
+    learning_rate: f64,
+    l2_linear: f64,
+    l2_factors: f64,
+    label_smoothing: f64,
+    row_orders: PyReadonlyArray2<'py, i64>,
+) -> PyResult<()> {
+    let opt = parse_optimizer(optimizer)?;
+    let (n_classes, v_n, k) = (v.shape()[0], v.shape()[1], v.shape()[2]);
+    let w_shape = [w.shape()[0], w.shape()[1]];
+    let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
+    let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
+    let y_s = y.as_slice()?;
+    let sw_s = sample_weight.as_slice()?;
+    let ro = row_orders.as_slice()?;
+    let w0_s = w0.as_slice_mut()?;
+    let w_s = w.as_slice_mut()?;
+    let v_s = v.as_slice_mut()?;
+    if w0_s.len() != n_classes || w_shape != [n_classes, n_features] || v_n != n_features {
+        return Err(val_err(format!(
+            "shape mismatch: n_classes={n_classes}, n_features={n_features}, \
+             w0={}, w={w_shape:?}, V dims=[{n_classes}, {v_n}, {k}]",
+            w0_s.len()
+        )));
+    }
+    let out = py.allow_threads(|| -> Result<(), String> {
+        let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
+        check_fit_args_mc(&csr, y_s, n_classes, sw_s, &ro_shape, ro)?;
+        fm::fit_multiclass_csr(
+            &csr, y_s, sw_s, w0_s, w_s, v_s, n_classes, n_features, k, opt, learning_rate,
+            l2_linear, l2_factors, label_smoothing, ro,
+        );
+        Ok(())
+    });
+    out.map_err(val_err)
+}
+
 /// Train an FFM (logistic loss) in place (w, v mutated; new w0 returned).
 /// batch_size=1, single-threaded; see ffm::fit_csr.
 #[pyfunction]
@@ -305,6 +386,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ffm_predict_dense, m)?)?;
     m.add_function(wrap_pyfunction!(ffm_predict_csr, m)?)?;
     m.add_function(wrap_pyfunction!(fm_fit_csr, m)?)?;
+    m.add_function(wrap_pyfunction!(fm_fit_multiclass_csr, m)?)?;
     m.add_function(wrap_pyfunction!(ffm_fit_csr, m)?)?;
     Ok(())
 }
