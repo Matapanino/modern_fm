@@ -52,6 +52,14 @@ def init_fm_params(rng, n_features, n_factors, init_scale):
     return w0, w, V
 
 
+def init_fm_multiclass_params(rng, n_classes, n_features, n_factors, init_scale):
+    """Per-class FM params: w0 (C,), w (C, n), V (C, n, k) ~ Normal(0, init_scale)."""
+    w0 = np.zeros(n_classes)
+    w = np.zeros((n_classes, n_features))
+    V = rng.normal(0.0, init_scale, size=(n_classes, n_features, n_factors))
+    return w0, w, V
+
+
 def init_ffm_params(rng, n_features, n_fields, n_factors, init_scale):
     """w0 = 0, w = 0, V ~ Uniform(0, init_scale / sqrt(k)) (libffm-style)."""
     w0 = 0.0
@@ -128,6 +136,90 @@ def fm_fit_reference(
                 w0 -= lr * g
                 w[idx] -= lr * g_w
                 V[idx] = Vi - lr * g_V
+    return w0, w, V
+
+
+def fm_fit_multiclass_reference(
+    X,
+    y,
+    params,
+    *,
+    optimizer="adagrad",
+    learning_rate=0.05,
+    l2_linear=0.0,
+    l2_factors=0.0,
+    row_orders=None,
+    label_smoothing=0.0,
+    sample_weight=None,
+):
+    """Train a multiclass (softmax) FM: one FM per class, coupled by softmax.
+
+    `params` = (w0 (C,), w (C, n), V (C, n, k)); `y` holds integer class indices
+    in [0, C). The gradient on class-c's logit is
+    sample_weight * (p_c - target_c), where target uses label smoothing
+    (target_c = 1-eps if c == y else eps/(C-1)). Per-class FM updates reuse the
+    binary FM gradient; classes share no parameters. NumPy ground truth for the
+    estimator's multiclass path (no Rust kernel in v0.1).
+    """
+    if optimizer not in OPTIMIZERS:
+        raise ValueError(f"unknown optimizer {optimizer!r}; expected one of {OPTIMIZERS}")
+    w0, w, V = params
+    w0 = np.array(w0, dtype=np.float64, copy=True)
+    w = np.array(w, dtype=np.float64, copy=True)
+    V = np.array(V, dtype=np.float64, copy=True)
+    y = np.asarray(y)
+    n_classes, _, k = V.shape
+    rows = list(_as_dense_rows(X))
+    sw = (
+        np.ones(len(rows))
+        if sample_weight is None
+        else np.asarray(sample_weight, dtype=np.float64)
+    )
+    if row_orders is None:
+        row_orders = np.arange(len(rows))[None, :]
+    adagrad = optimizer == "adagrad"
+    lr = learning_rate
+    eps = label_smoothing
+    off = eps / (n_classes - 1) if n_classes > 1 else 0.0
+    a_w0 = np.zeros_like(w0)
+    a_w = np.zeros_like(w)
+    a_V = np.zeros_like(V)
+    for order in np.asarray(row_orders):
+        for r in order:
+            idx, val = rows[r]
+            yc = int(y[r])
+            # class logits and the per-class factor cache (pre-update params)
+            logits = np.empty(n_classes)
+            caches = np.empty((n_classes, k))
+            for c in range(n_classes):
+                Vi = V[c][idx]
+                cache = Vi.T @ val
+                caches[c] = cache
+                logits[c] = (
+                    w0[c]
+                    + w[c][idx] @ val
+                    + 0.5 * (cache @ cache - ((Vi * val[:, None]) ** 2).sum())
+                )
+            ex = np.exp(logits - logits.max())  # stable softmax
+            p = ex / ex.sum()
+            for c in range(n_classes):
+                target = (1.0 - eps) if c == yc else off
+                g = sw[r] * (p[c] - target)
+                Vi = V[c][idx]
+                cache = caches[c]
+                g_w = g * val + l2_linear * w[c][idx]
+                g_V = g * (val[:, None] * cache[None, :] - Vi * (val**2)[:, None]) + l2_factors * Vi
+                if adagrad:
+                    a_w0[c] += g * g
+                    w0[c] -= lr * g / math.sqrt(a_w0[c] + ADAGRAD_EPS)
+                    a_w[c][idx] += g_w**2
+                    w[c][idx] -= lr * g_w / np.sqrt(a_w[c][idx] + ADAGRAD_EPS)
+                    a_V[c][idx] += g_V**2
+                    V[c][idx] = Vi - lr * g_V / np.sqrt(a_V[c][idx] + ADAGRAD_EPS)
+                else:
+                    w0[c] -= lr * g
+                    w[c][idx] -= lr * g_w
+                    V[c][idx] = Vi - lr * g_V
     return w0, w, V
 
 

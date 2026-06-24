@@ -116,6 +116,19 @@ def fm_fit(
     return w0, w, V
 
 
+def fm_fit_multiclass(
+    X, y, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
+    label_smoothing=0.0, sample_weight=None,
+):
+    """Train a multiclass (softmax) FM. NumPy reference path in v0.1 (no Rust
+    multiclass kernel yet); prediction still uses the Rust per-class kernel."""
+    return _reference_train.fm_fit_multiclass_reference(
+        X, y, params, optimizer=optimizer, learning_rate=learning_rate,
+        l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
+        label_smoothing=label_smoothing, sample_weight=sample_weight,
+    )
+
+
 def ffm_fit(
     X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     sample_weight=None,

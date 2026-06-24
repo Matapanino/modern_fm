@@ -3,7 +3,6 @@ import pytest
 from modern_fm import FFMClassifier, FMClassifier, FMRegressor
 
 ESTIMATORS = [FMClassifier, FMRegressor, FFMClassifier]
-CLASSIFIERS = [FMClassifier, FFMClassifier]
 
 
 def _tiny_binary(n=6, d=3):
@@ -79,16 +78,15 @@ def test_eval_set_not_implemented(cls):
         cls().fit(X, y, **_ffm_kwargs(cls, X.shape[1]), eval_set=())
 
 
-@pytest.mark.parametrize("cls", CLASSIFIERS)
-def test_softmax_loss_not_implemented(cls):
+def test_ffm_softmax_not_implemented():
+    # FMClassifier supports softmax/multiclass; FFM stays binary in v0.1.
     X, y = _tiny_binary()
     with pytest.raises(NotImplementedError):
-        cls(loss="softmax").fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
+        FFMClassifier(loss="softmax").fit(X, y, field_ids=np.zeros(X.shape[1], dtype=int))
 
 
-@pytest.mark.parametrize("cls", CLASSIFIERS)
-def test_multiclass_not_implemented(cls):
+def test_ffm_multiclass_not_implemented():
     X, _ = _tiny_binary()
     y = np.array([0, 1, 2, 0, 1, 2])
     with pytest.raises(NotImplementedError):
-        cls().fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
+        FFMClassifier().fit(X, y, field_ids=np.zeros(X.shape[1], dtype=int))

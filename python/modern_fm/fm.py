@@ -17,8 +17,13 @@ import scipy.sparse as sp
 
 from . import _backend
 from ._base import ModelIOMixin, ParamsMixin, check_is_fitted
-from ._reference_train import OPTIMIZERS, init_fm_params, make_row_orders
-from .losses import sigmoid
+from ._reference_train import (
+    OPTIMIZERS,
+    init_fm_multiclass_params,
+    init_fm_params,
+    make_row_orders,
+)
+from .losses import sigmoid, softmax
 
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
 
@@ -208,27 +213,73 @@ class FMClassifier(_FMBase):
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
         self._validate_fit_extras(eval_set)
-        if self.loss == "softmax":
-            raise NotImplementedError(f"multiclass (softmax) {_PHASE4}")
-        if self.loss != "logistic":
+        if self.loss not in ("logistic", "softmax"):
             raise ValueError(f"unknown loss {self.loss!r} for FMClassifier")
         X = _check_X(X)
-        self.classes_, y01 = _check_binary_classes(np.asarray(y))
+        y = np.asarray(y)
+        self.classes_ = np.unique(y)
+        if self.classes_.shape[0] < 2:
+            raise ValueError("y must contain at least 2 classes")
+        if self.classes_.shape[0] > 2 or self.loss == "softmax":
+            return self._fit_multiclass(X, y, sample_weight)
+        y01 = (y == self.classes_[1]).astype(np.float64)
         sw = _combine_weights(y01, self.classes_, sample_weight, self.class_weight, X.shape[0])
         return self._fit_core(X, _smooth(y01, self.label_smoothing), "logistic", sample_weight=sw)
 
+    def _fit_multiclass(self, X, y, sample_weight):
+        n_rows, n_features = X.shape
+        n_classes = self.classes_.shape[0]
+        if not 0.0 <= self.label_smoothing < 1.0:
+            raise ValueError(f"label_smoothing must be in [0, 1), got {self.label_smoothing}")
+        y_idx = np.searchsorted(self.classes_, y)  # classes_ is sorted (np.unique)
+        sw = _combine_weights(y_idx, self.classes_, sample_weight, self.class_weight, n_rows)
+        rng = np.random.default_rng(self.random_state)
+        params = init_fm_multiclass_params(
+            rng, n_classes, n_features, self.n_factors, self.init_scale
+        )
+        row_orders = make_row_orders(rng, n_rows, self.max_iter)
+        w0, w, V = _backend.fm_fit_multiclass(
+            X, y_idx, params,
+            optimizer=self.optimizer,
+            learning_rate=self.learning_rate,
+            l2_linear=self.l2_linear,
+            l2_factors=self.l2_factors,
+            row_orders=row_orders,
+            label_smoothing=self.label_smoothing,
+            sample_weight=sw,
+        )
+        out_dtype = np.float32 if self.dtype == "float32" else np.float64
+        self.w0_ = w0.astype(out_dtype)
+        self.w_ = w.astype(out_dtype)
+        self.V_ = V.astype(out_dtype)
+        self.n_features_in_ = n_features
+        self.n_iter_ = self.max_iter
+        return self
+
     def decision_function(self, X):
-        return self._raw_scores(X)
+        check_is_fitted(self)
+        X = _check_X(X, self.n_features_in_)
+        if self.V_.ndim == 3:  # multiclass: per-class FM logits -> (n, n_classes)
+            return np.column_stack(
+                [
+                    _backend.fm_predict_fast(X, float(self.w0_[c]), self.w_[c], self.V_[c])
+                    for c in range(self.V_.shape[0])
+                ]
+            )
+        return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_)
 
     def predict_proba(self, X):
-        p = sigmoid(self._raw_scores(X))
-        return np.column_stack([1.0 - p, p])
+        scores = self.decision_function(X)
+        if scores.ndim == 1:  # binary logistic
+            p = sigmoid(scores)
+            return np.column_stack([1.0 - p, p])
+        return softmax(scores)  # multiclass softmax, rows sum to 1
 
     def predict(self, X):
-        # _raw_scores first so check_is_fitted runs before classes_ is touched
-        # (predict before fit must raise NotFittedError, not AttributeError).
-        scores = self._raw_scores(X)
-        return self.classes_[(scores >= 0.0).astype(int)]
+        scores = self.decision_function(X)
+        if scores.ndim == 1:
+            return self.classes_[(scores >= 0.0).astype(int)]
+        return self.classes_[np.argmax(scores, axis=1)]
 
 
 class FMRegressor(_FMBase):
