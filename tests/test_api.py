@@ -72,21 +72,35 @@ def test_ffm_fit_requires_field_ids():
 
 
 @pytest.mark.parametrize("cls", ESTIMATORS)
-def test_batch_size_not_implemented(cls):
+def test_batch_size_gt_one_fits(cls):
+    # mini-batch (batch_size > 1) is supported (docs/optimization_spec.md).
     X, y = _tiny_binary()
-    with pytest.raises(NotImplementedError):
-        cls(batch_size=2).fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
+    model = cls(batch_size=4).fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
+    assert model is model
+    assert model.predict(X).shape == (X.shape[0],)
 
 
-def test_ffm_softmax_not_implemented():
-    # FMClassifier supports softmax/multiclass; FFM stays binary in v0.1.
+@pytest.mark.parametrize("cls", ESTIMATORS)
+@pytest.mark.parametrize("bad", [0, -1, 2.5])
+def test_batch_size_must_be_positive_int(cls, bad):
     X, y = _tiny_binary()
-    with pytest.raises(NotImplementedError):
-        FFMClassifier(loss="softmax").fit(X, y, field_ids=np.zeros(X.shape[1], dtype=int))
+    with pytest.raises(ValueError, match="batch_size"):
+        cls(batch_size=bad).fit(X, y, **_ffm_kwargs(cls, X.shape[1]))
 
 
-def test_ffm_multiclass_not_implemented():
+def test_ffm_softmax_loss_fits_multiclass():
+    # loss="softmax" routes through the multiclass (per-class) FFM path.
+    X, y = _tiny_binary()
+    model = FFMClassifier(loss="softmax", max_iter=5).fit(
+        X, y, field_ids=np.zeros(X.shape[1], dtype=int)
+    )
+    assert model.V_.ndim == 4  # (n_classes, n_features, n_fields, k)
+    assert model.predict_proba(X).shape == (X.shape[0], 2)
+
+
+def test_ffm_multiclass_fits():
     X, _ = _tiny_binary()
     y = np.array([0, 1, 2, 0, 1, 2])
-    with pytest.raises(NotImplementedError):
-        FFMClassifier().fit(X, y, field_ids=np.zeros(X.shape[1], dtype=int))
+    model = FFMClassifier(max_iter=5).fit(X, y, field_ids=np.zeros(X.shape[1], dtype=int))
+    assert model.V_.shape[0] == 3  # one FFM per class
+    np.testing.assert_array_equal(model.classes_, np.array([0, 1, 2]))

@@ -5,8 +5,10 @@
 //! O(z^2 k) per row in the number of nonzeros z; there is no FM-style
 //! factorization for FFM.
 
+use rayon::prelude::*;
+
 use crate::data::{dense_row_nonzeros, CsrView};
-use crate::optimizer::{adam_step, apply_update, sigmoid, Optimizer};
+use crate::optimizer::{sigmoid, step_coord, step_param, AdamState, FtrlState, Optimizer};
 
 /// Score one row given its nonzero (index, value) pairs.
 /// `v` is row-major (n_features, n_fields, k).
@@ -86,13 +88,199 @@ pub fn predict_csr(
     out
 }
 
-/// Train an FFM (logistic loss) in place with batch_size=1
-/// (docs/optimization_spec.md).
+/// Per-FFM mini-batch gradient scratch (docs/optimization_spec.md, "Mini-batch").
 ///
-/// Mirrors `_reference_train.ffm_fit_reference`: score from pre-update
-/// parameters; V gradients accumulated per touched (feature, field) slot
-/// over pairs (a ascending, b ascending), then applied once per slot; lazy
-/// L2; update order w0 -> w -> V (a ascending, field ascending). y is 0/1.
+/// Accumulates one batch's data-gradients from the frozen parameters — `g_w0`,
+/// `gw[i]` (linear), and `gv` per touched (feature, field) slot — then `flush`
+/// applies one update per touched coordinate with the batch-mean gradient plus
+/// lazy L2. `gv` and the slot index are laid out exactly like `v`.
+struct FfmGradAccum {
+    g_w0: f64,
+    gw: Vec<f64>,             // n_features
+    gv: Vec<f64>,             // n_features * n_fields * k (indexed like v)
+    touched_feat: Vec<usize>,
+    seen_feat: Vec<bool>,     // n_features
+    touched_slot: Vec<usize>, // slot = feature * n_fields + field
+    seen_slot: Vec<bool>,     // n_features * n_fields
+}
+
+impl FfmGradAccum {
+    fn new(n_features: usize, n_fields: usize, k: usize) -> Self {
+        Self {
+            g_w0: 0.0,
+            gw: vec![0.0; n_features],
+            gv: vec![0.0; n_features * n_fields * k],
+            touched_feat: Vec::new(),
+            seen_feat: vec![false; n_features],
+            touched_slot: Vec::new(),
+            seen_slot: vec![false; n_features * n_fields],
+        }
+    }
+
+    /// Add one row's data-gradient (`g` = dL/ds, already weighted), reading the
+    /// frozen factors `v`. `idx` are the row's (usize) feature ids.
+    #[allow(clippy::too_many_arguments)]
+    fn add_row(
+        &mut self,
+        idx: &[usize],
+        values: &[f64],
+        field_ids: &[i64],
+        g: f64,
+        v: &[f64],
+        n_fields: usize,
+        k: usize,
+    ) {
+        self.g_w0 += g;
+        for (&i, &x) in idx.iter().zip(values) {
+            if !self.seen_feat[i] {
+                self.seen_feat[i] = true;
+                self.touched_feat.push(i);
+            }
+            self.gw[i] += g * x;
+        }
+        let z = idx.len();
+        for a in 0..z {
+            let (i, xi) = (idx[a], values[a]);
+            let fi = field_ids[i] as usize;
+            for b in (a + 1)..z {
+                let (j, xj) = (idx[b], values[b]);
+                let fj = field_ids[j] as usize;
+                let coef = g * xi * xj;
+                let (slot_a, slot_b) = (i * n_fields + fj, j * n_fields + fi);
+                let (va, vb) = (slot_a * k, slot_b * k);
+                for t in 0..k {
+                    self.gv[va + t] += coef * v[vb + t];
+                    self.gv[vb + t] += coef * v[va + t];
+                }
+                if !self.seen_slot[slot_a] {
+                    self.seen_slot[slot_a] = true;
+                    self.touched_slot.push(slot_a);
+                }
+                if !self.seen_slot[slot_b] {
+                    self.seen_slot[slot_b] = true;
+                    self.touched_slot.push(slot_b);
+                }
+            }
+        }
+    }
+
+    /// Fold another partial accumulator into self (clearing it), in a fixed order.
+    fn merge_from(&mut self, other: &mut FfmGradAccum, k: usize) {
+        self.g_w0 += other.g_w0;
+        other.g_w0 = 0.0;
+        for &i in &other.touched_feat {
+            if !self.seen_feat[i] {
+                self.seen_feat[i] = true;
+                self.touched_feat.push(i);
+            }
+            self.gw[i] += other.gw[i];
+            other.gw[i] = 0.0;
+            other.seen_feat[i] = false;
+        }
+        other.touched_feat.clear();
+        for &slot in &other.touched_slot {
+            if !self.seen_slot[slot] {
+                self.seen_slot[slot] = true;
+                self.touched_slot.push(slot);
+            }
+            let base = slot * k;
+            for t in 0..k {
+                self.gv[base + t] += other.gv[base + t];
+                other.gv[base + t] = 0.0;
+            }
+            other.seen_slot[slot] = false;
+        }
+        other.touched_slot.clear();
+    }
+
+    /// Apply one update per touched coordinate (w0, then w, then V slots), then
+    /// clear the touched entries back to zero so the buffers are reusable.
+    #[allow(clippy::too_many_arguments)]
+    fn flush(
+        &mut self,
+        bsz: f64,
+        w0: &mut f64,
+        w: &mut [f64],
+        v: &mut [f64],
+        acc_w0: &mut f64,
+        acc_w: &mut [f64],
+        acc_v: &mut [f64],
+        adam: &mut AdamState,
+        ftrl: &mut FtrlState,
+        k: usize,
+        opt: Optimizer,
+        lr: f64,
+        l1_linear: f64,
+        l2_linear: f64,
+        l1_factors: f64,
+        l2_factors: f64,
+    ) {
+        step_param(
+            w0, self.g_w0 / bsz, 0.0, 0.0, acc_w0,
+            &mut adam.m_w0, &mut adam.s_w0, &mut adam.t_w0, &mut ftrl.z_w0, &mut ftrl.n_w0, lr, opt,
+        );
+        self.g_w0 = 0.0;
+        for &i in &self.touched_feat {
+            step_coord(
+                &mut w[i], self.gw[i] / bsz, l1_linear, l2_linear, &mut acc_w[i],
+                &mut adam.m_w, &mut adam.s_w, &mut adam.t_w, &mut ftrl.z_w, &mut ftrl.n_w, i, lr, opt,
+            );
+            self.gw[i] = 0.0;
+            self.seen_feat[i] = false;
+        }
+        self.touched_feat.clear();
+        for &slot in &self.touched_slot {
+            let base = slot * k;
+            for t in 0..k {
+                let vi = base + t;
+                step_coord(
+                    &mut v[vi], self.gv[vi] / bsz, l1_factors, l2_factors, &mut acc_v[vi],
+                    &mut adam.m_v, &mut adam.s_v, &mut adam.t_v, &mut ftrl.z_v, &mut ftrl.n_v, vi, lr, opt,
+                );
+                self.gv[vi] = 0.0;
+            }
+            self.seen_slot[slot] = false;
+        }
+        self.touched_slot.clear();
+    }
+}
+
+/// Accumulate a contiguous run of rows into `acc` from the frozen parameters.
+/// One unit of work for the (optionally parallel) batch fill.
+#[allow(clippy::too_many_arguments)]
+fn accumulate_chunk(
+    acc: &mut FfmGradAccum,
+    chunk: &[i64],
+    csr: &CsrView,
+    y: &[f64],
+    sample_weight: &[f64],
+    field_ids: &[i64],
+    w0: f64,
+    w: &[f64],
+    v: &[f64],
+    n_fields: usize,
+    k: usize,
+) {
+    let mut idx_buf: Vec<usize> = Vec::new();
+    for &r in chunk {
+        let (indices, values) = csr.row(r as usize);
+        idx_buf.clear();
+        idx_buf.extend(indices.iter().map(|&i| i as usize));
+        let s = ffm_score_row(&idx_buf, values, field_ids, w0, w, v, n_fields, k);
+        let g = sample_weight[r as usize] * (sigmoid(s) - y[r as usize]);
+        acc.add_row(&idx_buf, values, field_ids, g, v, n_fields, k);
+    }
+}
+
+/// Train an FFM (logistic loss) in place (docs/optimization_spec.md).
+///
+/// Mirrors `_reference_train.ffm_fit_reference`: each epoch's `n_rows` entries
+/// in `row_orders` are consumed in `batch_size` chunks; scores come from the
+/// frozen batch-start parameters, V gradients are accumulated per touched
+/// (feature, field) slot over all pairs, averaged over the batch, and applied
+/// once per slot; lazy L2; update order w0 -> w -> V. batch_size=1 is the
+/// per-row path. `n_jobs` (>= 1) splits each batch across that many threads,
+/// reduced in chunk order (n_jobs=1 is serial and matches the reference). y is 0/1.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_csr(
     csr: &CsrView,
@@ -109,82 +297,138 @@ pub fn fit_csr(
     k: usize,
     opt: Optimizer,
     lr: f64,
+    l1_linear: f64,
     l2_linear: f64,
+    l1_factors: f64,
     l2_factors: f64,
+    n_rows: usize,
+    batch_size: usize,
+    n_jobs: usize,
     row_orders: &[i64],
 ) {
-    let mut idx_buf: Vec<usize> = Vec::new();
-    let mut g_v: Vec<f64> = Vec::new();
-    let mut touched: Vec<bool> = Vec::new();
-    // Adam moment state (first moment m, second moment s, count t); empty unless
-    // Adam, never round-tripped (optimization_spec.md).
-    let adam = matches!(opt, Optimizer::Adam { .. });
-    let alloc = |n: usize| if adam { vec![0.0; n] } else { Vec::new() };
-    let (mut m_w0, mut s_w0, mut t_w0) = (0.0_f64, 0.0_f64, 0.0_f64);
-    let (mut m_w, mut s_w, mut t_w) = (alloc(w.len()), alloc(w.len()), alloc(w.len()));
-    let (mut m_v, mut s_v, mut t_v) = (alloc(v.len()), alloc(v.len()), alloc(v.len()));
-    for &r in row_orders {
-        let (indices, values) = csr.row(r as usize);
-        let z = indices.len();
-        idx_buf.clear();
-        idx_buf.extend(indices.iter().map(|&i| i as usize));
-        // pass 1: score from pre-update parameters
-        let s = ffm_score_row(&idx_buf, values, field_ids, *w0, w, v, n_fields, k);
-        let g = sample_weight[r as usize] * (sigmoid(s) - y[r as usize]);
-        if let Optimizer::Adam { beta1, beta2, eps } = opt {
-            adam_step(w0, g, &mut m_w0, &mut s_w0, &mut t_w0, lr, beta1, beta2, eps);
-        } else {
-            apply_update(w0, g, acc_w0, lr, opt);
-        }
-        for (&i, &x) in idx_buf.iter().zip(values) {
-            let grad = g * x + l2_linear * w[i];
-            if let Optimizer::Adam { beta1, beta2, eps } = opt {
-                adam_step(&mut w[i], grad, &mut m_w[i], &mut s_w[i], &mut t_w[i], lr, beta1, beta2, eps);
+    let n = w.len();
+    let n_threads = n_jobs.max(1);
+    let mut accs: Vec<FfmGradAccum> =
+        (0..n_threads).map(|_| FfmGradAccum::new(n, n_fields, k)).collect();
+    let mut adam = AdamState::new(matches!(opt, Optimizer::Adam { .. }), n, n * n_fields * k);
+    let mut ftrl = FtrlState::new(matches!(opt, Optimizer::Ftrl { .. }), n, n * n_fields * k);
+    for epoch in row_orders.chunks(n_rows) {
+        for batch in epoch.chunks(batch_size) {
+            if n_threads == 1 {
+                accumulate_chunk(
+                    &mut accs[0], batch, csr, y, sample_weight, field_ids, *w0, w, v, n_fields, k,
+                );
             } else {
-                apply_update(&mut w[i], grad, &mut acc_w[i], lr, opt);
-            }
-        }
-        // pass 2: accumulate V gradients per touched (feature, field) slot
-        g_v.clear();
-        g_v.resize(z * n_fields * k, 0.0);
-        touched.clear();
-        touched.resize(z * n_fields, false);
-        for a in 0..z {
-            let (i, xi) = (idx_buf[a], values[a]);
-            let fi = field_ids[i] as usize;
-            for b in (a + 1)..z {
-                let (j, xj) = (idx_buf[b], values[b]);
-                let fj = field_ids[j] as usize;
-                let coef = g * xi * xj;
-                let va = (i * n_fields + fj) * k;
-                let vb = (j * n_fields + fi) * k;
-                let sa = (a * n_fields + fj) * k;
-                let sb = (b * n_fields + fi) * k;
-                for t in 0..k {
-                    g_v[sa + t] += coef * v[vb + t];
-                    g_v[sb + t] += coef * v[va + t];
+                let chunk_len = batch.len().div_ceil(n_threads);
+                let (w_ro, v_ro): (&[f64], &[f64]) = (w, v);
+                accs.par_iter_mut()
+                    .zip(batch.par_chunks(chunk_len))
+                    .for_each(|(acc, chunk)| {
+                        accumulate_chunk(
+                            acc, chunk, csr, y, sample_weight, field_ids, *w0, w_ro, v_ro,
+                            n_fields, k,
+                        );
+                    });
+                let (head, tail) = accs.split_at_mut(1);
+                for other in tail.iter_mut() {
+                    head[0].merge_from(other, k);
                 }
-                touched[a * n_fields + fj] = true;
-                touched[b * n_fields + fi] = true;
             }
+            accs[0].flush(
+                batch.len() as f64, w0, w, v, acc_w0, acc_w, acc_v, &mut adam, &mut ftrl, k, opt,
+                lr, l1_linear, l2_linear, l1_factors, l2_factors,
+            );
         }
-        for a in 0..z {
-            let i = idx_buf[a];
-            for fld in 0..n_fields {
-                if touched[a * n_fields + fld] {
-                    for t in 0..k {
-                        let vi = (i * n_fields + fld) * k + t;
-                        let grad = g_v[(a * n_fields + fld) * k + t] + l2_factors * v[vi];
-                        if let Optimizer::Adam { beta1, beta2, eps } = opt {
-                            adam_step(
-                                &mut v[vi], grad, &mut m_v[vi], &mut s_v[vi], &mut t_v[vi], lr,
-                                beta1, beta2, eps,
-                            );
-                        } else {
-                            apply_update(&mut v[vi], grad, &mut acc_v[vi], lr, opt);
-                        }
-                    }
+    }
+}
+
+/// Train a multiclass (softmax) FFM in place (docs/optimization_spec.md).
+///
+/// Mirrors `_reference_train.ffm_fit_multiclass_reference`: one FFM per class,
+/// coupled only through the softmax gradient `sample_weight * (p_c - target_c)`
+/// (label smoothing as in the FM multiclass kernel). Per-class logits come from
+/// the frozen batch-start parameters; each class accumulates and flushes
+/// independently. `w0` is (C,), `w` is row-major (C, n_features), `v` is row-major
+/// (C, n_features, n_fields, k); `y` holds class indices in [0, n_classes).
+/// Serial (no `n_jobs`), like the FM multiclass kernel.
+#[allow(clippy::too_many_arguments)]
+pub fn fit_multiclass_csr(
+    csr: &CsrView,
+    y: &[i64],
+    sample_weight: &[f64],
+    field_ids: &[i64],
+    w0: &mut [f64],
+    w: &mut [f64],
+    v: &mut [f64],
+    n_classes: usize,
+    n_features: usize,
+    n_fields: usize,
+    k: usize,
+    opt: Optimizer,
+    lr: f64,
+    l1_linear: f64,
+    l2_linear: f64,
+    l1_factors: f64,
+    l2_factors: f64,
+    label_smoothing: f64,
+    n_rows: usize,
+    batch_size: usize,
+    row_orders: &[i64],
+) {
+    let n = n_features;
+    let vc = n * n_fields * k; // V entries per class
+    let mut acc_w0 = vec![0.0; n_classes];
+    let mut acc_w = vec![0.0; n_classes * n];
+    let mut acc_v = vec![0.0; n_classes * vc];
+    let adam = matches!(opt, Optimizer::Adam { .. });
+    let ftrl = matches!(opt, Optimizer::Ftrl { .. });
+    let mut accums: Vec<FfmGradAccum> =
+        (0..n_classes).map(|_| FfmGradAccum::new(n, n_fields, k)).collect();
+    let mut adams: Vec<AdamState> = (0..n_classes).map(|_| AdamState::new(adam, n, vc)).collect();
+    let mut ftrls: Vec<FtrlState> = (0..n_classes).map(|_| FtrlState::new(ftrl, n, vc)).collect();
+    let off = if n_classes > 1 {
+        label_smoothing / (n_classes as f64 - 1.0)
+    } else {
+        0.0
+    };
+    let mut probs = vec![0.0; n_classes];
+    let mut idx_buf: Vec<usize> = Vec::new();
+    for epoch in row_orders.chunks(n_rows) {
+        for batch in epoch.chunks(batch_size) {
+            for &r in batch {
+                let (indices, values) = csr.row(r as usize);
+                idx_buf.clear();
+                idx_buf.extend(indices.iter().map(|&i| i as usize));
+                let yc = y[r as usize] as usize;
+                let sw = sample_weight[r as usize];
+                // pass 1: per-class FFM logit from the frozen parameters
+                for c in 0..n_classes {
+                    let w_c = &w[c * n..(c + 1) * n];
+                    let v_c = &v[c * vc..(c + 1) * vc];
+                    probs[c] = ffm_score_row(&idx_buf, values, field_ids, w0[c], w_c, v_c, n_fields, k);
                 }
+                let maxl = probs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let mut sum_ex = 0.0;
+                for p in probs.iter_mut() {
+                    *p = (*p - maxl).exp();
+                    sum_ex += *p;
+                }
+                for c in 0..n_classes {
+                    let p = probs[c] / sum_ex;
+                    let target = if c == yc { 1.0 - label_smoothing } else { off };
+                    let g = sw * (p - target);
+                    let v_c = &v[c * vc..(c + 1) * vc];
+                    accums[c].add_row(&idx_buf, values, field_ids, g, v_c, n_fields, k);
+                }
+            }
+            let bsz = batch.len() as f64;
+            for c in 0..n_classes {
+                let (wr, vr) = (c * n..(c + 1) * n, c * vc..(c + 1) * vc);
+                accums[c].flush(
+                    bsz, &mut w0[c], &mut w[wr.clone()], &mut v[vr.clone()],
+                    &mut acc_w0[c], &mut acc_w[wr], &mut acc_v[vr], &mut adams[c], &mut ftrls[c], k,
+                    opt, lr, l1_linear, l2_linear, l1_factors, l2_factors,
+                );
             }
         }
     }
@@ -246,7 +490,7 @@ mod tests {
         fit_csr(
             &csr, &y, &[1.0, 1.0], &field_ids, &mut w0, &mut w, &mut v,
             &mut a0, &mut aw, &mut av, 2, 2,
-            Optimizer::Adagrad, 0.1, 0.0, 0.0, &orders,
+            Optimizer::Adagrad, 0.1, 0.0, 0.0, 0.0, 0.0, 2, 1, 1, &orders,
         );
         assert!(loss(w0, &w, &v) < 0.5 * before);
     }

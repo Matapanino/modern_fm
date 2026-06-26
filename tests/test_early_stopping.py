@@ -83,12 +83,37 @@ def test_early_stopping_reproducible():
     np.testing.assert_array_equal(a.predict(X), b.predict(X))
 
 
-def test_multiclass_early_stopping_not_implemented():
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
+def test_multiclass_early_stopping_works(optimizer):
+    # multiclass + early stopping rounds optimizer state via the reference path.
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(300, 8))
+    y = (X[:, :3] @ rng.normal(size=(3, 3))).argmax(axis=1)  # learnable 3-class
+    model = FMClassifier(
+        optimizer=optimizer, random_state=0, max_iter=50, patience=6,
+        learning_rate=0.05, early_stopping=True,
+    ).fit(X, y)
+    assert 1 <= model.n_iter_ <= 50
+    assert model.V_.shape[0] == 3  # one parameter set per class
+    assert model.predict(X).shape == (X.shape[0],)
+
+
+def test_multiclass_early_stopping_reproducible():
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(300, 8))
+    y = (X[:, :3] @ rng.normal(size=(3, 3))).argmax(axis=1)
+    a = FMClassifier(random_state=0, max_iter=40, early_stopping=True, patience=5).fit(X, y)
+    b = FMClassifier(random_state=0, max_iter=40, early_stopping=True, patience=5).fit(X, y)
+    assert a.n_iter_ == b.n_iter_
+    np.testing.assert_array_equal(a.V_, b.V_)
+
+
+def test_ftrl_multiclass_early_stopping_not_implemented():
     rng = np.random.default_rng(0)
     X = rng.normal(size=(60, 4))
     y = rng.integers(0, 3, size=60)
     with pytest.raises(NotImplementedError):
-        FMClassifier(random_state=0, max_iter=10, early_stopping=True).fit(X, y)
+        FMClassifier(optimizer="ftrl", random_state=0, max_iter=10, early_stopping=True).fit(X, y)
 
 
 def test_invalid_validation_fraction():
