@@ -1,5 +1,10 @@
 # modern_fm
 
+[![PyPI](https://img.shields.io/pypi/v/modern-fm.svg)](https://pypi.org/project/modern-fm/)
+[![Python versions](https://img.shields.io/pypi/pyversions/modern-fm.svg)](https://pypi.org/project/modern-fm/)
+[![CI](https://github.com/Matapanino/modern_fm/actions/workflows/ci.yml/badge.svg)](https://github.com/Matapanino/modern_fm/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+
 Fast, sklearn-compatible Factorization Machines (FM) and Field-aware
 Factorization Machines (FFM) for Python.
 
