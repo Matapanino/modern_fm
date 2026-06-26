@@ -18,6 +18,9 @@ All notable changes to `modern_fm` are documented here. This project adheres to
   predict), with ndarray-parity tests.
 - libffm text-format I/O: `load_libffm` / `dump_libffm` for the
   `<label> field:feature:value ...` format, with round-trip tests.
+- `benchmarks/bench_vs_baseline.py`: synthetic-CTR comparison (test AUC, fit
+  time, predict throughput) vs scikit-learn `LogisticRegression`, with an
+  `n_jobs` / `batch_size` sweep and a results table in the README.
 
 ## [0.2.1] - 2026-06-26
 

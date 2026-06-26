@@ -61,6 +61,31 @@ early stopping (`early_stopping=True` or `eval_set=(X_val, y_val)`), and the
 `benchmarks/bench_synthetic.py` reports fit time and predict throughput against
 the NumPy reference floor.
 
+## Benchmarks
+
+On synthetic CTR data (40k train / 20k test; 16 one-hot categorical fields →
+256 features) with *planted pairwise interactions* between field pairs — signal
+a linear model cannot represent — FM/FFM recover most of it. `n_jobs=-1` uses all
+cores (8 here); absolute numbers vary by machine.
+
+| Model | Test AUC | Fit (s) | Predict (rows/s) |
+|---|---:|---:|---:|
+| `LogisticRegression` (sklearn) | 0.694 | 0.01 | 60M |
+| `FMClassifier` (batch=1) | 0.817 | 1.34 | 4.3M |
+| `FMClassifier` (batch=512) | 0.816 | 0.45 | 4.8M |
+| `FMClassifier` (batch=512, `n_jobs=-1`) | 0.816 | 0.33 | 5.0M |
+| `FFMClassifier` (batch=512) | 0.846 | 1.68 | 2.3M |
+| `FFMClassifier` (batch=512, `n_jobs=-1`) | 0.846 | 1.46 | 2.1M |
+
+- **Interactions matter**: AUC climbs 0.69 → 0.82 (FM) → 0.85 (FFM) as the model
+  captures the pairwise / field-aware structure the linear baseline misses.
+- **Mini-batch**: `batch_size=512` trains ~3× faster than per-row SGD at equal AUC.
+- **Multi-core**: `n_jobs=-1` adds a further ~1.2–1.4× here (more on larger/denser data).
+
+Reproduce with `python benchmarks/bench_vs_baseline.py`. `xlearn` is auto-included
+if importable, but it does not build on every platform (it failed to build here on
+macOS/arm64 + CPython 3.11).
+
 ## Development
 
 Requires Python >= 3.10 and a recent Rust toolchain (1.74+; `rustup update`).
