@@ -354,7 +354,7 @@ fn fm_fit_multiclass_csr<'py>(
     out.map_err(val_err)
 }
 
-/// Train an FFM (logistic loss) in place (w, v mutated; new w0 returned).
+/// Train an FFM (squared or logistic loss) in place (w, v mutated; new w0 returned).
 /// batch_size=1, single-threaded; see ffm::fit_csr.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
@@ -373,6 +373,7 @@ fn ffm_fit_csr<'py>(
     mut v: PyReadwriteArray3<'py, f64>,
     mut acc_w: PyReadwriteArray1<'py, f64>,
     mut acc_v: PyReadwriteArray3<'py, f64>,
+    loss: &str,
     optimizer: &str,
     learning_rate: f64,
     l2_linear: f64,
@@ -387,6 +388,7 @@ fn ffm_fit_csr<'py>(
     l1_factors: f64,
     ftrl_beta: f64,
 ) -> PyResult<(f64, f64)> {
+    let loss = parse_loss(loss)?;
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
     if batch_size == 0 {
         return Err(val_err("batch_size must be >= 1".to_string()));
@@ -419,7 +421,7 @@ fn ffm_fit_csr<'py>(
         let mut acc_w0 = acc_w0;
         ffm::fit_csr(
             &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s,
-            n_fields, k, opt, learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
+            n_fields, k, loss, opt, learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
             ro_shape[1], batch_size, n_jobs.max(1), ro,
         );
         Ok((w0, acc_w0))

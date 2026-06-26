@@ -1,7 +1,7 @@
 """modern_fm: fast, sklearn-compatible FM / FFM for Python."""
 
 from ._base import NotFittedError
-from .ffm import FFMClassifier
+from .ffm import FFMClassifier, FFMRegressor
 from .fm import FMClassifier, FMRegressor
 from .libffm import dump_libffm, load_libffm
 from .preprocessing import CategoricalEncoder
@@ -12,6 +12,7 @@ __all__ = [
     "FMClassifier",
     "FMRegressor",
     "FFMClassifier",
+    "FFMRegressor",
     "CategoricalEncoder",
     "NotFittedError",
     "load_libffm",

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 import scipy.sparse as sp
-from modern_fm import FFMClassifier, FMClassifier, FMRegressor
+from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, FMRegressor
 
 
 def _binary(n=8, d=3, seed=0):
@@ -51,6 +51,15 @@ def test_ffm_rejects_nonfinite_X():
     X[1, 1] = np.nan
     with pytest.raises(ValueError, match="NaN or infinity"):
         FFMClassifier(random_state=0, max_iter=2).fit(X, y, field_ids=np.arange(4) % 2)
+
+
+def test_ffm_regressor_rejects_nonfinite_y():
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(8, 4))
+    y = X[:, 0].copy()
+    y[0] = np.inf
+    with pytest.raises(ValueError, match="NaN or infinity"):
+        FFMRegressor(random_state=0, max_iter=2).fit(X, y, field_ids=np.arange(4) % 2)
 
 
 def test_ndim_validation():

@@ -121,6 +121,17 @@ def new_adam_state(w0, w, V):
     return [z(w0), z(w0), z(w0), z(w), z(w), z(w), z(V), z(V), z(V)]
 
 
+def new_ftrl_state(w0, w, V):
+    """Fresh per-coordinate FTRL state [z_w0, n_w0, z_w, n_w, z_V, n_V] for
+    round-tripping the (z, n) state across epoch-by-epoch calls (early stopping).
+    Shapes follow (w0, w, V), so this serves both binary FM (scalar w0) and
+    multiclass FM (per-class w0); the scalar binary z_w0/n_w0 are written back by
+    the trainer (the array slots mutate in place). The FTRL counterpart of
+    `new_adam_state`. See the `ftrl_state` argument."""
+    z = np.zeros_like
+    return [z(w0), z(w0), z(w), z(w), z(V), z(V)]
+
+
 def init_fm_params(rng, n_features, n_factors, init_scale):
     """w0 = 0, w = 0, V ~ Normal(0, init_scale)."""
     w0 = 0.0
@@ -202,6 +213,7 @@ def fm_fit_reference(
     batch_size=1,
     state=None,
     adam_state=None,
+    ftrl_state=None,
 ):
     """Train an FM from `params` = (w0, w, V); returns new (w0, w, V) copies.
 
@@ -215,6 +227,8 @@ def fm_fit_reference(
     `state` round-trips AdaGrad accumulators across epoch-by-epoch calls (early
     stopping). `adam_state` (see `new_adam_state`) does the same for Adam moments;
     it is the Adam counterpart of `state` and the two are mutually exclusive.
+    `ftrl_state` (see `new_ftrl_state`) does the same for FTRL's per-coordinate
+    (z, n) state.
     """
     _check_loss_optimizer(loss, optimizer)
     w0, w, V = params
@@ -234,12 +248,10 @@ def fm_fit_reference(
     adagrad = optimizer == "adagrad"
     adam = optimizer == "adam"
     ftrl = optimizer == "ftrl"
-    if ftrl and state is not None:
-        raise NotImplementedError(
-            "ftrl does not support the early-stopping state hand-off in v0.2"
-        )
     if adam_state is not None and not adam:
         raise ValueError("adam_state is only valid for optimizer='adam'")
+    if ftrl_state is not None and not ftrl:
+        raise ValueError("ftrl_state is only valid for optimizer='ftrl'")
     lr = learning_rate
     if state is None:
         a_w0, a_w, a_V = 0.0, np.zeros_like(w), np.zeros_like(V)
@@ -253,10 +265,14 @@ def fm_fit_reference(
         m_w0, v_w0, t_w0 = adam_state[0], adam_state[1], adam_state[2]
         m_w, v_w, t_w = adam_state[3], adam_state[4], adam_state[5]
         m_V, v_V, t_V = adam_state[6], adam_state[7], adam_state[8]
-    if ftrl:
+    if ftrl and ftrl_state is None:
         z_w0, n_w0 = 0.0, 0.0
         z_w, n_w = np.zeros_like(w), np.zeros_like(w)
         z_V, n_V = np.zeros_like(V), np.zeros_like(V)
+    elif ftrl:  # round-trip (z, n) across epochs (arrays mutated in place)
+        z_w0, n_w0 = ftrl_state[0], ftrl_state[1]
+        z_w, n_w = ftrl_state[2], ftrl_state[3]
+        z_V, n_V = ftrl_state[4], ftrl_state[5]
     for order in np.asarray(row_orders):
         for batch in _iter_batches(order, batch_size):
             bsz = len(batch)
@@ -306,6 +322,8 @@ def fm_fit_reference(
         state[0], state[1], state[2] = a_w0, a_w, a_V
     if adam_state is not None:  # moment arrays mutate in place; write the scalars
         adam_state[0], adam_state[1], adam_state[2] = m_w0, v_w0, t_w0
+    if ftrl_state is not None:  # (z, n) arrays mutate in place; write the scalars
+        ftrl_state[0], ftrl_state[1] = z_w0, n_w0
     return w0, w, V
 
 
@@ -330,6 +348,7 @@ def fm_fit_multiclass_reference(
     batch_size=1,
     state=None,
     adam_state=None,
+    ftrl_state=None,
 ):
     """Train a multiclass (softmax) FM: one FM per class, coupled by softmax.
 
@@ -359,10 +378,10 @@ def fm_fit_multiclass_reference(
     adagrad = optimizer == "adagrad"
     adam = optimizer == "adam"
     ftrl = optimizer == "ftrl"
-    if ftrl and state is not None:
-        raise NotImplementedError("ftrl does not support the early-stopping state hand-off")
     if adam_state is not None and not adam:
         raise ValueError("adam_state is only valid for optimizer='adam'")
+    if ftrl_state is not None and not ftrl:
+        raise ValueError("ftrl_state is only valid for optimizer='ftrl'")
     lr = learning_rate
     eps = label_smoothing
     off = eps / (n_classes - 1) if n_classes > 1 else 0.0
@@ -378,10 +397,14 @@ def fm_fit_multiclass_reference(
         m_w0, v_w0, t_w0 = adam_state[0], adam_state[1], adam_state[2]
         m_w, v_w, t_w = adam_state[3], adam_state[4], adam_state[5]
         m_V, v_V, t_V = adam_state[6], adam_state[7], adam_state[8]
-    if ftrl:
+    if ftrl and ftrl_state is None:
         z_w0, n_w0 = np.zeros_like(w0), np.zeros_like(w0)
         z_w, n_w = np.zeros_like(w), np.zeros_like(w)
         z_V, n_V = np.zeros_like(V), np.zeros_like(V)
+    elif ftrl:  # round-trip (z, n) across epochs (arrays mutated in place)
+        z_w0, n_w0 = ftrl_state[0], ftrl_state[1]
+        z_w, n_w = ftrl_state[2], ftrl_state[3]
+        z_V, n_V = ftrl_state[4], ftrl_state[5]
     for order in np.asarray(row_orders):
         for batch in _iter_batches(order, batch_size):
             bsz = len(batch)
@@ -452,6 +475,8 @@ def fm_fit_multiclass_reference(
         state[0], state[1], state[2] = a_w0, a_w, a_V
     if adam_state is not None:
         adam_state[0], adam_state[1], adam_state[2] = m_w0, v_w0, t_w0
+    if ftrl_state is not None:
+        ftrl_state[0], ftrl_state[1] = z_w0, n_w0
     return w0, w, V
 
 
@@ -461,6 +486,7 @@ def ffm_fit_reference(
     field_ids,
     params,
     *,
+    loss="logistic",
     optimizer="adagrad",
     learning_rate=0.05,
     l2_linear=0.0,
@@ -476,15 +502,17 @@ def ffm_fit_reference(
     batch_size=1,
     state=None,
     adam_state=None,
+    ftrl_state=None,
 ):
-    """Train an FFM (logistic loss) from `params` = (w0, w, V); returns copies.
+    """Train an FFM from `params` = (w0, w, V); returns copies.
 
-    V has shape (n_features, n_fields, k). y must be 0/1 (or a soft target in
-    [0, 1]). `sample_weight` scales each row's gradient. `batch_size` averages
-    each batch's gradient and applies one update per touched (feature, field)
-    slot (docs/optimization_spec.md); batch_size=1 is the per-row path.
+    `loss` is "logistic" (y in {0, 1}, or a soft target in [0, 1]) or "squared"
+    (regression, real-valued y). V has shape (n_features, n_fields, k).
+    `sample_weight` scales each row's gradient. `batch_size` averages each
+    batch's gradient and applies one update per touched (feature, field) slot
+    (docs/optimization_spec.md); batch_size=1 is the per-row path.
     """
-    _check_loss_optimizer("logistic", optimizer)
+    _check_loss_optimizer(loss, optimizer)
     field_ids = np.asarray(field_ids, dtype=np.int64)
     w0, w, V = params
     w0 = float(w0)
@@ -500,15 +528,14 @@ def ffm_fit_reference(
     )
     if row_orders is None:
         row_orders = np.arange(len(rows))[None, :]
+    logistic = loss == "logistic"
     adagrad = optimizer == "adagrad"
     adam = optimizer == "adam"
     ftrl = optimizer == "ftrl"
-    if ftrl and state is not None:
-        raise NotImplementedError(
-            "ftrl does not support the early-stopping state hand-off in v0.2"
-        )
     if adam_state is not None and not adam:
         raise ValueError("adam_state is only valid for optimizer='adam'")
+    if ftrl_state is not None and not ftrl:
+        raise ValueError("ftrl_state is only valid for optimizer='ftrl'")
     lr = learning_rate
     if state is None:
         a_w0, a_w, a_V = 0.0, np.zeros_like(w), np.zeros_like(V)
@@ -522,10 +549,14 @@ def ffm_fit_reference(
         m_w0, v_w0, t_w0 = adam_state[0], adam_state[1], adam_state[2]
         m_w, v_w, t_w = adam_state[3], adam_state[4], adam_state[5]
         m_V, v_V, t_V = adam_state[6], adam_state[7], adam_state[8]
-    if ftrl:
+    if ftrl and ftrl_state is None:
         z_w0, n_w0 = 0.0, 0.0
         z_w, n_w = np.zeros_like(w), np.zeros_like(w)
         z_V, n_V = np.zeros_like(V), np.zeros_like(V)
+    elif ftrl:  # round-trip (z, n) across epochs (arrays mutated in place)
+        z_w0, n_w0 = ftrl_state[0], ftrl_state[1]
+        z_w, n_w = ftrl_state[2], ftrl_state[3]
+        z_V, n_V = ftrl_state[4], ftrl_state[5]
     for order in np.asarray(row_orders):
         for batch in _iter_batches(order, batch_size):
             bsz = len(batch)
@@ -543,7 +574,7 @@ def ffm_fit_reference(
                 for a in range(z):
                     for b in range(a + 1, z):
                         s += (V[idx[a], f[b]] @ V[idx[b], f[a]]) * val[a] * val[b]
-                g = (_sigmoid(s) - y[r]) * sw[r]
+                g = ((_sigmoid(s) - y[r]) if logistic else (s - y[r])) * sw[r]
                 g_w0 += g
                 gw[idx] += g * val
                 for a in range(z):
@@ -601,6 +632,8 @@ def ffm_fit_reference(
         state[0], state[1], state[2] = a_w0, a_w, a_V
     if adam_state is not None:  # moment arrays mutate in place; write the scalars
         adam_state[0], adam_state[1], adam_state[2] = m_w0, v_w0, t_w0
+    if ftrl_state is not None:  # (z, n) arrays mutate in place; write the scalars
+        ftrl_state[0], ftrl_state[1] = z_w0, n_w0
     return w0, w, V
 
 
@@ -624,6 +657,9 @@ def ffm_fit_multiclass_reference(
     epsilon=1e-8,
     ftrl_beta=1.0,
     batch_size=1,
+    state=None,
+    adam_state=None,
+    ftrl_state=None,
 ):
     """Train a multiclass (softmax) FFM: one FFM per class, coupled by softmax.
 
@@ -652,18 +688,33 @@ def ffm_fit_multiclass_reference(
     adagrad = optimizer == "adagrad"
     adam = optimizer == "adam"
     ftrl = optimizer == "ftrl"
+    if adam_state is not None and not adam:
+        raise ValueError("adam_state is only valid for optimizer='adam'")
+    if ftrl_state is not None and not ftrl:
+        raise ValueError("ftrl_state is only valid for optimizer='ftrl'")
     lr = learning_rate
     eps = label_smoothing
     off = eps / (n_classes - 1) if n_classes > 1 else 0.0
-    a_w0, a_w, a_V = np.zeros_like(w0), np.zeros_like(w), np.zeros_like(V)
-    if adam:
+    if state is None:
+        a_w0, a_w, a_V = np.zeros_like(w0), np.zeros_like(w), np.zeros_like(V)
+    else:
+        a_w0, a_w, a_V = state  # AdaGrad accumulators persist across epoch-driven calls
+    if adam and adam_state is None:
         m_w0, v_w0, t_w0 = np.zeros_like(w0), np.zeros_like(w0), np.zeros_like(w0)
         m_w, v_w, t_w = np.zeros_like(w), np.zeros_like(w), np.zeros_like(w)
         m_V, v_V, t_V = np.zeros_like(V), np.zeros_like(V), np.zeros_like(V)
-    if ftrl:
+    elif adam:  # round-trip moments across epochs (all arrays mutated in place)
+        m_w0, v_w0, t_w0 = adam_state[0], adam_state[1], adam_state[2]
+        m_w, v_w, t_w = adam_state[3], adam_state[4], adam_state[5]
+        m_V, v_V, t_V = adam_state[6], adam_state[7], adam_state[8]
+    if ftrl and ftrl_state is None:
         z_w0, n_w0 = np.zeros_like(w0), np.zeros_like(w0)
         z_w, n_w = np.zeros_like(w), np.zeros_like(w)
         z_V, n_V = np.zeros_like(V), np.zeros_like(V)
+    elif ftrl:  # round-trip (z, n) across epochs (arrays mutated in place)
+        z_w0, n_w0 = ftrl_state[0], ftrl_state[1]
+        z_w, n_w = ftrl_state[2], ftrl_state[3]
+        z_V, n_V = ftrl_state[4], ftrl_state[5]
     for order in np.asarray(row_orders):
         for batch in _iter_batches(order, batch_size):
             bsz = len(batch)
@@ -746,6 +797,12 @@ def ffm_fit_multiclass_reference(
                             if tslot[i, fld]:
                                 grad = gV[c][i, fld] / bsz + l2_factors * V[c][i, fld]
                                 V[c][i, fld] -= lr * grad
+    if state is not None:
+        state[0], state[1], state[2] = a_w0, a_w, a_V
+    if adam_state is not None:
+        adam_state[0], adam_state[1], adam_state[2] = m_w0, v_w0, t_w0
+    if ftrl_state is not None:
+        ftrl_state[0], ftrl_state[1] = z_w0, n_w0
     return w0, w, V
 
 
@@ -792,6 +849,7 @@ def ffm_train(
     y,
     field_ids,
     *,
+    loss="logistic",
     optimizer="adagrad",
     learning_rate=0.05,
     epochs=10,
@@ -805,7 +863,7 @@ def ffm_train(
     beta_2=0.999,
     epsilon=1e-8,
 ):
-    """Seeded end-to-end FFM training (logistic loss)."""
+    """Seeded end-to-end FFM training (logistic or squared loss)."""
     rng = np.random.default_rng(random_state)
     field_ids = np.asarray(field_ids, dtype=np.int64)
     n_fields = int(field_ids.max()) + 1
@@ -816,6 +874,7 @@ def ffm_train(
         y,
         field_ids,
         params,
+        loss=loss,
         optimizer=optimizer,
         learning_rate=learning_rate,
         l2_linear=l2_linear,
