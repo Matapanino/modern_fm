@@ -31,10 +31,18 @@
 - [x] Adam optimizer (`optimizer="adam"`, per-parameter lazy Adam with
   `beta_1`/`beta_2`/`epsilon`); FM binary/multiclass + FFM, parity-tested vs the
   NumPy reference. Adam + early stopping is deferred (moments are not round-tripped).
-- FTRL optimizer
+- [x] FTRL-Proximal optimizer (`optimizer="ftrl"`, `l1_linear`/`l1_factors`/
+  `ftrl_beta`): per-coordinate `(z, n)` state with L1/L2 folded into the update;
+  FM binary/multiclass + FFM, parity-tested vs the NumPy reference; L1 yields exact
+  zeros (composes with mini-batch + n_jobs; FTRL + early stopping deferred)
 - [x] Rust multiclass-softmax training kernel (`fm_fit_multiclass_csr`),
   parity-tested vs the NumPy reference (done ahead of v0.2)
-- mini-batch (`batch_size > 1`); `rayon` row-parallelism (`n_jobs > 1`)
+- [x] mini-batch (`batch_size > 1`): per-batch gradient averaging with one update
+  per touched coordinate (FM binary/multiclass + FFM), parity-tested vs the NumPy
+  reference at batch_size ∈ {1, 4, full}; batch_size=1 stays the per-row path
+- [x] `rayon` row-parallelism (`n_jobs > 1`): deterministic parallel-accumulate /
+  serial-apply per batch (FM binary + FFM; multiclass serial); `n_jobs=1` matches
+  the reference, `n_jobs>1` reproducible per thread count. ~3x on 4 cores for FFM.
 - full sklearn `check_estimator` compatibility
 - `partial_fit`, `warm_start=True`
 - pairwise dropout, interaction pruning
@@ -42,7 +50,21 @@
 - libffm format loader/exporter
 - model inspection: top interactions
 - pandas/polars input
-- CI + cibuildwheel (Linux/macOS/Windows wheels)
+- [x] CI + release pipeline: `.github/workflows/ci.yml` (pytest + ruff across
+  {Linux, macOS, Windows} × py3.10–3.13, plus cargo test/clippy) and
+  `release.yml` (abi3 wheels via maturin-action + sdist, PyPI trusted publishing
+  on a `v*` tag). Verified locally: maturin builds an abi3 wheel + sdist that
+  install and run in a clean venv.
+- [x] Adam + early stopping: moments round-tripped across epochs via the NumPy
+  reference path (`fm_fit_reference`'s `adam_state`); FM binary/regression + FFM,
+  per-epoch hand-off equals one multi-epoch call exactly.
+- [x] multiclass + early stopping: per-class optimizer state (AdaGrad/Adam)
+  round-tripped via the reference path; softmax cross-entropy eval metric,
+  round-trip equals a single multi-epoch call.
+- [x] FFM multiclass softmax (`ffm_fit_multiclass_csr`): one FFM per class coupled
+  by softmax, all optimizers (SGD/AdaGrad/Adam/FTRL) + mini-batch, parity-tested
+  vs the NumPy reference; `FFMClassifier` auto-detects >2 classes / `loss="softmax"`.
+  FTRL + early stopping and multiclass FFM + early stopping remain (niche).
 
 ## v0.3+ — Model variants & GPU
 

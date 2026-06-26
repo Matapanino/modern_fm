@@ -3,15 +3,25 @@
 Fast, sklearn-compatible Factorization Machines (FM) and Field-aware
 Factorization Machines (FFM) for Python.
 
-**Status: v0.1 in development.** Implemented: pure-NumPy reference
-implementations, a Rust CPU backend for prediction and SGD/AdaGrad training
-(parity-tested against the reference), and sklearn-style estimators —
-`FMClassifier` (binary + multiclass softmax), `FMRegressor`, and
-`FFMClassifier` (binary) — with `sample_weight`/`class_weight`,
-`label_smoothing`, early stopping, a `CategoricalEncoder`, and
-`save_model`/`load_model`. Multiclass training currently runs on the NumPy
-reference path (a Rust multiclass kernel, mini-batch, and threaded training are
-v0.2). See `docs/roadmap.md`.
+**Status: v0.2 (Beta).** A Rust CPU backend (parity-tested against pure-NumPy
+reference implementations) drives sklearn-style estimators — `FMClassifier`
+(binary + multiclass softmax), `FMRegressor`, and `FFMClassifier`
+(binary + multiclass softmax) — with the SGD / AdaGrad / Adam /
+**FTRL-Proximal** optimizers, **mini-batch**
+gradient averaging (`batch_size`), **multi-core training** via `rayon`
+(`n_jobs`), plus `sample_weight`/`class_weight`, `label_smoothing`, early
+stopping, a `CategoricalEncoder`, and `save_model`/`load_model`. FTRL's L1
+(`l1_linear`/`l1_factors`) yields exact-zero weights. See `docs/roadmap.md` for
+remaining niche gaps (FTRL + early stopping, multiclass + early-stopping for FFM).
+
+## Installation
+
+```bash
+pip install modern-fm        # once published; prebuilt wheels, no Rust needed
+```
+
+Until the first PyPI release, install from source (requires a Rust toolchain;
+see Development below).
 
 ## Usage
 
@@ -23,6 +33,8 @@ model = FMClassifier(
     optimizer="adagrad",
     learning_rate=0.05,
     max_iter=100,
+    batch_size=256,        # mini-batch gradient averaging (1 = per-row SGD)
+    n_jobs=-1,             # train batches across all CPU cores
     l2_linear=1e-5,
     l2_factors=1e-5,
     random_state=42,
@@ -30,7 +42,11 @@ model = FMClassifier(
 model.fit(X_train, y_train)
 proba = model.predict_proba(X_test)
 
-ffm = FFMClassifier(n_factors=8, random_state=42)
+# FTRL-Proximal with L1 for sparse linear weights (classic CTR setup)
+sparse = FMClassifier(optimizer="ftrl", l1_linear=1.0, batch_size=256, random_state=42)
+sparse.fit(X_train, y_train)
+
+ffm = FFMClassifier(n_factors=8, n_jobs=-1, random_state=42)
 ffm.fit(X_train, y_train, field_ids=field_ids)
 ```
 

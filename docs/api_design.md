@@ -12,15 +12,18 @@ from modern_fm import FMClassifier
 model = FMClassifier(
     n_factors=16,
     loss="logistic",          # classifier: "logistic" (binary) / "softmax" (auto for multiclass)
-    optimizer="adagrad",      # "sgd" | "adagrad" | "adam"  (v0.2: "ftrl")
-    learning_rate=0.05,
+    optimizer="adagrad",      # "sgd" | "adagrad" | "adam" | "ftrl"
+    learning_rate=0.05,       # also FTRL's alpha (step size)
     beta_1=0.9,               # Adam 1st-moment decay (optimizer="adam" only)
     beta_2=0.999,             # Adam 2nd-moment decay (optimizer="adam" only)
     epsilon=1e-8,             # Adam denominator epsilon (optimizer="adam" only)
+    ftrl_beta=1.0,            # FTRL stabilizer beta (optimizer="ftrl" only)
     max_iter=100,
-    batch_size=4096,
+    batch_size=1,             # 1 = per-row SGD; >1 averages the batch gradient
     l2_linear=1e-5,
     l2_factors=1e-5,
+    l1_linear=0.0,            # L1 on linear weights (FTRL only; yields exact zeros)
+    l1_factors=0.0,           # L1 on latent factors (FTRL only)
     init_scale=0.01,          # stddev of latent factor init
     label_smoothing=0.0,
     class_weight=None,        # None | "balanced" | dict
@@ -69,6 +72,10 @@ model.fit(X, y, field_ids=field_ids)        # field_ids: int array, shape (n_fea
 model.predict_proba(X)                       # field mapping is stored on the model at fit time
 ```
 
+Binary (logistic) by default; pass a target with >2 classes (or `loss="softmax"`)
+to train one FFM per class coupled by softmax — `predict_proba` rows then sum to 1
+over `n_classes`.
+
 `field_ids[i]` is the field of feature/column `i`. After `fit`, the model
 stores `field_ids_` and `n_fields_`; predict-time calls do not take field_ids.
 
@@ -79,7 +86,9 @@ stores `field_ids_` and `n_fields_`; predict-time calls do not take field_ids.
   - FFM: `V_` shape `(n_features, n_fields, n_factors)`
 - `classes_` (classifiers), `n_features_in_`, `n_iter_`
 - FFM: `field_ids_`, `n_fields_`
-- multiclass FM: one parameter set per class, `V_` shape `(n_classes, n_features, n_factors)`
+- multiclass (one parameter set per class): `w0_` shape `(n_classes,)`, `w_` shape
+  `(n_classes, n_features)`; FM `V_` shape `(n_classes, n_features, n_factors)`,
+  FFM `V_` shape `(n_classes, n_features, n_fields, n_factors)`
 
 ## Errors and validation
 
