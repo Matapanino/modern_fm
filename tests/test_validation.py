@@ -54,5 +54,5 @@ def test_ffm_rejects_nonfinite_X():
 
 
 def test_ndim_validation():
-    with pytest.raises(ValueError, match="2-dimensional"):
+    with pytest.raises(ValueError, match="2D array"):
         FMClassifier().fit(np.zeros(5), np.zeros(5))

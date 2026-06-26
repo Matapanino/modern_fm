@@ -3,8 +3,9 @@
 Binary (logistic) and multiclass (softmax, one FFM per class) classification,
 trained through `_backend` with configurable `batch_size` (mini-batch gradient
 averaging) and `n_jobs` rayon row-parallelism (binary; multiclass is serial).
-`field_ids` is explicit and required at fit time — no automatic field inference
-in v0.1; the mapping is stored on the model (`field_ids_`, `n_fields_`) so
+`field_ids` may be passed at fit time (one field id per feature/column); when
+omitted, each column becomes its own field (so `fit(X, y)` works under the
+sklearn API). The mapping is stored on the model (`field_ids_`, `n_fields_`) so
 predict-time calls do not take it.
 
 Training runs in float64; learned attributes are stored in the requested
@@ -18,9 +19,12 @@ or with multiclass raises NotImplementedError (see docs/roadmap.md).
 from __future__ import annotations
 
 import numpy as np
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.utils.multiclass import check_classification_targets, unique_labels
+from sklearn.utils.validation import check_consistent_length, column_or_1d
 
 from . import _backend
-from ._base import ModelIOMixin, ParamsMixin, check_is_fitted
+from ._base import ModelIOMixin, check_is_fitted
 from ._early_stop import normalize_eval_set, run_epochs, split_indices
 from ._reference_train import (
     OPTIMIZERS,
@@ -35,15 +39,21 @@ from .fm import (
     _no_ftrl_early_stopping,
     _resolve_n_jobs,
     _smooth,
+    _validate_X,
 )
 from .losses import logistic_loss, sigmoid, softmax
 
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
 
 
-class FFMClassifier(ModelIOMixin, ParamsMixin):
+class FFMClassifier(ClassifierMixin, BaseEstimator, ModelIOMixin):
     """Field-aware Factorization Machine binary classifier.
     See docs/api_design.md and docs/math_spec.md."""
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.sparse = True
+        return tags
 
     def __init__(
         self,
@@ -102,11 +112,6 @@ class FFMClassifier(ModelIOMixin, ParamsMixin):
         self.ftrl_beta = ftrl_beta
 
     def fit(self, X, y, field_ids=None, sample_weight=None, eval_set=None):
-        if field_ids is None:
-            raise ValueError(
-                "FFMClassifier.fit requires field_ids (shape (n_features,)); "
-                "automatic field inference is not supported in v0.1."
-            )
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
         if self.dtype not in ("float32", "float64"):
@@ -122,8 +127,10 @@ class FFMClassifier(ModelIOMixin, ParamsMixin):
             raise ValueError(f"unknown loss {self.loss!r} for FFMClassifier")
         _no_ftrl_early_stopping(self.optimizer, self.early_stopping, eval_set)
 
-        X = _check_X(X)
+        X = _validate_X(self, X, reset=True)
         n_rows, n_features = X.shape
+        if field_ids is None:
+            field_ids = np.arange(n_features, dtype=np.int64)  # default: each column its own field
         field_ids = np.asarray(field_ids, dtype=np.int64)
         if field_ids.shape != (n_features,):
             raise ValueError(
@@ -134,9 +141,15 @@ class FFMClassifier(ModelIOMixin, ParamsMixin):
             raise ValueError("field_ids must be non-negative integers")
         self.field_ids_ = field_ids
         self.n_fields_ = int(field_ids.max()) + 1
-        self.classes_ = np.unique(np.asarray(y))
+        y = column_or_1d(y, warn=True)
+        check_consistent_length(X, y)
+        check_classification_targets(y)
+        self.classes_ = unique_labels(y)
         if self.classes_.shape[0] < 2:
-            raise ValueError("y must contain at least 2 classes")
+            raise ValueError(
+                "Classifier can't train when only one class is present in y; "
+                "need at least 2 classes."
+            )
         if self.classes_.shape[0] > 2 or self.loss == "softmax":
             if self.early_stopping or eval_set is not None:
                 raise NotImplementedError(f"early stopping with multiclass FFM {_PHASE4}")
@@ -276,7 +289,7 @@ class FFMClassifier(ModelIOMixin, ParamsMixin):
 
     def decision_function(self, X):
         check_is_fitted(self)
-        X = _check_X(X, self.n_features_in_)
+        X = _validate_X(self, X, reset=False)
         if self.V_.ndim == 4:  # multiclass: per-class FFM logits -> (n, n_classes)
             return np.column_stack(
                 [

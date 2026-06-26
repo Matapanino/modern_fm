@@ -23,9 +23,12 @@ import os
 
 import numpy as np
 import scipy.sparse as sp
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+from sklearn.utils.multiclass import check_classification_targets, unique_labels
+from sklearn.utils.validation import check_consistent_length, column_or_1d, validate_data
 
 from . import _backend
-from ._base import ModelIOMixin, ParamsMixin, check_is_fitted
+from ._base import ModelIOMixin, check_is_fitted
 from ._early_stop import normalize_eval_set, run_epochs, split_indices
 from ._reference_train import (
     OPTIMIZERS,
@@ -54,11 +57,32 @@ def _check_X(X, n_features=None):
     return X
 
 
+def _validate_X(estimator, X, *, reset):
+    """sklearn-conformant X validation for the main fit/predict path.
+
+    Delegates to ``validate_data`` (sets ``n_features_in_`` / ``feature_names_in_``,
+    enforces 2D, casts to float64, converts sparse to CSR, and on ``reset=False``
+    checks the feature count) while keeping our finite-error message, whose text
+    contains 'NaN'/'infinity' so it also satisfies sklearn's nan/inf check.
+    """
+    X = validate_data(
+        estimator, X, accept_sparse="csr", dtype=np.float64,
+        ensure_all_finite=False, reset=reset,
+    )
+    data = X.data if sp.issparse(X) else X
+    if not np.all(np.isfinite(data)):
+        raise ValueError("X contains NaN or infinity, which modern_fm does not accept")
+    return X
+
+
 def _check_binary_classes(y):
     """Return (classes_, y01 float64) for a binary target."""
     classes = np.unique(y)
     if classes.shape[0] < 2:
-        raise ValueError("y must contain at least 2 classes")
+        raise ValueError(
+            "Classifier can't train when only one class is present in y; "
+            "need at least 2 classes."
+        )
     if classes.shape[0] > 2:
         raise NotImplementedError(
             f"multiclass classification (got {classes.shape[0]} classes) {_PHASE4}"
@@ -77,6 +101,8 @@ def _check_sample_weight(sample_weight, n_rows):
         raise ValueError("sample_weight contains NaN or infinity")
     if np.any(sw < 0.0):
         raise ValueError("sample_weight must be non-negative")
+    if not np.any(sw):
+        raise ValueError("sample_weight must contain at least one non-zero weight")
     return sw
 
 
@@ -141,7 +167,12 @@ def _no_ftrl_early_stopping(optimizer, early_stopping, eval_set):
         raise NotImplementedError(f"early stopping with the ftrl optimizer {_PHASE4}")
 
 
-class _FMBase(ModelIOMixin, ParamsMixin):
+class _FMBase(BaseEstimator, ModelIOMixin):
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.sparse = True
+        return tags
+
     def _validate_common(self):
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
@@ -252,11 +283,11 @@ class _FMBase(ModelIOMixin, ParamsMixin):
 
     def _raw_scores(self, X):
         check_is_fitted(self)
-        X = _check_X(X, self.n_features_in_)
+        X = _validate_X(self, X, reset=False)
         return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_)
 
 
-class FMClassifier(_FMBase):
+class FMClassifier(ClassifierMixin, _FMBase):
     """Factorization Machine binary classifier (logistic loss).
 
     See docs/api_design.md and docs/math_spec.md. Multiclass (softmax) is a
@@ -323,11 +354,16 @@ class FMClassifier(_FMBase):
         _no_ftrl_early_stopping(self.optimizer, self.early_stopping, eval_set)
         if self.loss not in ("logistic", "softmax"):
             raise ValueError(f"unknown loss {self.loss!r} for FMClassifier")
-        X = _check_X(X)
-        y = np.asarray(y)
-        self.classes_ = np.unique(y)
+        X = _validate_X(self, X, reset=True)
+        y = column_or_1d(y, warn=True)
+        check_consistent_length(X, y)
+        check_classification_targets(y)
+        self.classes_ = unique_labels(y)
         if self.classes_.shape[0] < 2:
-            raise ValueError("y must contain at least 2 classes")
+            raise ValueError(
+            "Classifier can't train when only one class is present in y; "
+            "need at least 2 classes."
+        )
         if self.classes_.shape[0] > 2 or self.loss == "softmax":
             if self.early_stopping or eval_set is not None:
                 eval_val = None
@@ -456,7 +492,7 @@ class FMClassifier(_FMBase):
 
     def decision_function(self, X):
         check_is_fitted(self)
-        X = _check_X(X, self.n_features_in_)
+        X = _validate_X(self, X, reset=False)
         if self.V_.ndim == 3:  # multiclass: per-class FM logits -> (n, n_classes)
             return np.column_stack(
                 [
@@ -480,7 +516,7 @@ class FMClassifier(_FMBase):
         return self.classes_[np.argmax(scores, axis=1)]
 
 
-class FMRegressor(_FMBase):
+class FMRegressor(RegressorMixin, _FMBase):
     """Factorization Machine regressor (squared loss)."""
 
     def __init__(
@@ -536,11 +572,10 @@ class FMRegressor(_FMBase):
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
         _no_ftrl_early_stopping(self.optimizer, self.early_stopping, eval_set)
-        X = _check_X(X)
+        X = _validate_X(self, X, reset=True)
         sw = _check_sample_weight(sample_weight, X.shape[0])
-        y = np.asarray(y, dtype=np.float64)
-        if y.shape != (X.shape[0],):
-            raise ValueError(f"y has shape {y.shape}, expected ({X.shape[0]},)")
+        y = column_or_1d(y, warn=True).astype(np.float64)
+        check_consistent_length(X, y)
         if not np.all(np.isfinite(y)):
             raise ValueError("y contains NaN or infinity")
         if self.early_stopping or eval_set is not None:

@@ -22,7 +22,7 @@ def test_init_stores_params_only(cls):
     model = cls()
     # no learned attributes (trailing underscore) and no extra state after init
     assert all(not k.endswith("_") for k in vars(model))
-    assert set(vars(model)) == set(model._param_names())
+    assert set(vars(model)) == set(model.get_params())
 
 
 @pytest.mark.parametrize("cls", ESTIMATORS)
@@ -58,11 +58,14 @@ def test_set_params_returns_self(cls):
     assert model.n_factors == 3
 
 
-def test_ffm_fit_requires_field_ids():
+def test_ffm_fit_defaults_field_ids_to_per_column():
+    # Without field_ids, each column becomes its own field so fit(X, y) works
+    # under the sklearn API; n_fields_ == n_features.
     X = np.zeros((4, 3))
     y = np.array([0, 1, 0, 1])
-    with pytest.raises(ValueError, match="field_ids"):
-        FFMClassifier().fit(X, y)
+    model = FFMClassifier(max_iter=2, random_state=0).fit(X, y)
+    assert model.n_fields_ == 3
+    assert np.array_equal(model.field_ids_, np.arange(3))
 
 
 # fit is implemented for FM binary/regression and FFM binary (Phase 2B). The

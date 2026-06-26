@@ -76,8 +76,10 @@ Binary (logistic) by default; pass a target with >2 classes (or `loss="softmax"`
 to train one FFM per class coupled by softmax — `predict_proba` rows then sum to 1
 over `n_classes`.
 
-`field_ids[i]` is the field of feature/column `i`. After `fit`, the model
-stores `field_ids_` and `n_fields_`; predict-time calls do not take field_ids.
+`field_ids[i]` is the field of feature/column `i`; it is optional — when omitted,
+each column becomes its own field, so `fit(X, y)` works under the plain sklearn
+API. After `fit`, the model stores `field_ids_` and `n_fields_`; predict-time
+calls do not take field_ids.
 
 ## Learned attributes (after fit)
 

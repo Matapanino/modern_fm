@@ -43,7 +43,9 @@
 - [x] `rayon` row-parallelism (`n_jobs > 1`): deterministic parallel-accumulate /
   serial-apply per batch (FM binary + FFM; multiclass serial); `n_jobs=1` matches
   the reference, `n_jobs>1` reproducible per thread count. ~3x on 4 cores for FFM.
-- full sklearn `check_estimator` compatibility
+- [x] full sklearn `check_estimator` compatibility (estimators subclass sklearn
+  `BaseEstimator` + `Classifier`/`RegressorMixin`; scikit-learn is now a runtime
+  dependency). `FFMClassifier.fit(X, y)` defaults `field_ids` to per-column.
 - `partial_fit`, `warm_start=True`
 - pairwise dropout, interaction pruning
 - calibration helper

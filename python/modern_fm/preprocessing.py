@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import numpy as np
 import scipy.sparse as sp
+from sklearn.base import BaseEstimator, TransformerMixin
 
-from ._base import ParamsMixin, check_is_fitted
+from ._base import check_is_fitted
 
 
 def _check_2d(X):
@@ -26,7 +27,7 @@ def _check_2d(X):
     return X
 
 
-class CategoricalEncoder(ParamsMixin):
+class CategoricalEncoder(TransformerMixin, BaseEstimator):
     """One-hot encode integer categorical columns to CSR, tracking field ids.
 
     Parameters

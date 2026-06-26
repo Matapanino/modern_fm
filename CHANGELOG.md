@@ -3,6 +3,17 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Full scikit-learn `check_estimator` compatibility: `FMClassifier`,
+  `FMRegressor`, and `FFMClassifier` subclass sklearn's `BaseEstimator` +
+  `Classifier`/`RegressorMixin`, work in `Pipeline` / `GridSearchCV` / `clone`,
+  and validate input via `validate_data` (pandas DataFrames carry
+  `feature_names_in_`). `CategoricalEncoder` is now a `TransformerMixin`.
+  `FFMClassifier.fit(X, y)` no longer requires `field_ids` (each column defaults
+  to its own field). **scikit-learn (>=1.6) is now a runtime dependency.**
+
 ## [0.2.1] - 2026-06-26
 
 ### Fixed
