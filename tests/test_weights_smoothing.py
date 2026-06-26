@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from modern_fm import FFMClassifier, FMClassifier
+from modern_fm import FFMClassifier, FFMRegressor, FMClassifier
 
 
 def _imbalanced(n=200, d=5, pos_frac=0.12, seed=0):
@@ -96,3 +96,15 @@ def test_ffm_sample_weight_and_class_weight_run():
     proba = m.predict_proba(X)
     assert proba.shape == (50, 2)
     np.testing.assert_allclose(proba.sum(axis=1), 1.0, atol=1e-12)
+
+
+def test_ffm_regressor_sample_weight_runs():
+    rng = np.random.default_rng(5)
+    X = rng.normal(size=(50, 4))
+    y = X @ rng.normal(size=4)
+    fid = np.arange(4) % 2
+    sw = rng.uniform(0.5, 2.0, size=50)
+    m = FFMRegressor(random_state=0, max_iter=20).fit(X, y, field_ids=fid, sample_weight=sw)
+    pred = m.predict(X)
+    assert pred.shape == (50,)
+    assert np.all(np.isfinite(pred))

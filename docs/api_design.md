@@ -31,6 +31,7 @@ model = FMClassifier(
     validation_fraction=0.1,
     patience=10,
     min_delta=0.0,
+    warm_start=False,         # fit() resumes from the previous solution + optimizer state
     dtype="float32",          # "float32" | "float64"
     backend="rust_cpu",       # fixed in v0.1; later "cuda", "torch"
     random_state=None,
@@ -49,7 +50,7 @@ FMClassifier.load_model(path)
 `FMRegressor` is identical minus `loss`/`class_weight`/`label_smoothing`/
 `predict_proba`/`decision_function` (loss is squared error).
 
-## FFMClassifier
+## FFMClassifier / FFMRegressor
 
 Field information is **explicit and required** in v0.1 — automatic field
 inference hides bugs that silently degrade accuracy.
@@ -80,6 +81,44 @@ over `n_classes`.
 each column becomes its own field, so `fit(X, y)` works under the plain sklearn
 API. After `fit`, the model stores `field_ids_` and `n_fields_`; predict-time
 calls do not take field_ids.
+
+`FFMRegressor` is the squared-loss counterpart (as `FMRegressor` is to
+`FMClassifier`): the same constructor minus `loss` / `label_smoothing` /
+`class_weight`, and no `predict_proba` / `decision_function` / `classes_`.
+`fit(X, y, field_ids=…)` takes the same field mapping and stores `field_ids_` /
+`n_fields_`; `predict(X)` returns the raw FFM score (squared-error loss).
+
+## Partial fit / warm start (incremental & streaming training)
+
+All four estimators support incremental training:
+
+```python
+model.partial_fit(X, y, classes=None, sample_weight=None)                  # FM*
+model.partial_fit(X, y, classes=None, field_ids=None, sample_weight=None)  # FFM*
+# the regressors drop `classes`
+```
+
+- **One pass per call.** Each `partial_fit` runs a single epoch over its chunk in
+  natural row order, continuing the persisted optimizer state, with no shuffle and no
+  early stopping.
+- **First call.** Classifiers require `classes=` (all labels) on the first call
+  (sklearn convention); binary-vs-multiclass is frozen then. The FFM `field_ids` map
+  is set on the first call and validated (or reused) thereafter.
+  `class_weight="balanced"` is not supported by `partial_fit` (it cannot be computed
+  from a stream).
+- **Exactness contract.** N sequential `partial_fit` calls over consecutive chunks
+  equal one `partial_fit` over the concatenation, bit-for-bit, given `dtype="float64"`,
+  `n_jobs=1`, and `batch_size=1` (or chunk lengths that are multiples of
+  `batch_size`). `dtype="float32"` truncates parameters between calls and `n_jobs>1`
+  reorders float sums, so both relax bit-exactness.
+- `n_iter_` accumulates the number of passes across calls.
+
+`warm_start=True` makes `fit` resume from the current `w0_`/`w_`/`V_` (and the
+persisted optimizer state) instead of re-initializing, then run `max_iter` more epochs
+(honoring `early_stopping`); `warm_start=False` is a fresh fit. `save_model` /
+`load_model` does **not** persist the streamed optimizer state (`pickle` does);
+resuming after `load_model` restarts the optimizer accumulators from the loaded
+parameters.
 
 ## Learned attributes (after fit)
 

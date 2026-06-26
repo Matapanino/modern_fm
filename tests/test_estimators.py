@@ -11,10 +11,10 @@ NumPy fallback); their parity is covered elsewhere.
 import numpy as np
 import pytest
 import scipy.sparse as sp
-from modern_fm import FFMClassifier, FMClassifier, FMRegressor, NotFittedError
+from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, FMRegressor, NotFittedError
 from modern_fm.losses import logistic_loss, squared_loss
 
-ALL = [FMClassifier, FMRegressor, FFMClassifier]
+ALL = [FMClassifier, FMRegressor, FFMClassifier, FFMRegressor]
 CLASSIFIERS = [FMClassifier, FFMClassifier]
 LOG2 = np.log(2.0)
 
@@ -38,7 +38,7 @@ def _make(cls, **kw):
 
 
 def _fit(model, X, y):
-    if isinstance(model, FFMClassifier):
+    if isinstance(model, (FFMClassifier, FFMRegressor)):
         return model.fit(X, y, field_ids=_field_ids(X.shape[1]))
     return model.fit(X, y)
 
@@ -100,12 +100,25 @@ def test_regressor_learns_and_predict_shape():
     assert squared_loss(y, pred) < 0.5 * baseline
 
 
+def test_ffm_regressor_learns_and_predict_shape():
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(100, 6))
+    y = X @ rng.normal(size=6)
+    model = FFMRegressor(random_state=0, max_iter=60, learning_rate=0.05).fit(
+        X, y, field_ids=_field_ids(6)
+    )
+    pred = model.predict(X)
+    assert pred.shape == (100,)
+    baseline = squared_loss(y, np.full_like(y, y.mean()))
+    assert squared_loss(y, pred) < 0.5 * baseline
+
+
 @pytest.mark.parametrize("cls", ALL)
 def test_not_fitted_raises(cls):
     X = np.zeros((3, 4))
     with pytest.raises(NotFittedError):
         cls().predict(X)
-    if cls is not FMRegressor:
+    if cls not in (FMRegressor, FFMRegressor):
         with pytest.raises(NotFittedError):
             cls().predict_proba(X)
         with pytest.raises(NotFittedError):
@@ -120,13 +133,13 @@ def test_learned_attributes(cls):
     assert model.w_.shape == (6,)
     assert model.n_features_in_ == 6
     assert model.n_iter_ == 40
-    if cls is FFMClassifier:
+    if cls in (FFMClassifier, FFMRegressor):
         assert model.n_fields_ == 3
         assert model.V_.shape == (6, model.n_fields_, model.n_factors)
         np.testing.assert_array_equal(model.field_ids_, _field_ids(6))
     else:
         assert model.V_.shape == (6, model.n_factors)
-    if cls is not FMRegressor:
+    if cls not in (FMRegressor, FFMRegressor):
         np.testing.assert_array_equal(model.classes_, np.unique(y))
 
 
@@ -195,6 +208,17 @@ def test_adam_regressor_learns():
     assert squared_loss(y, model.predict(X)) < 0.5 * baseline
 
 
+def test_adam_ffm_regressor_learns():
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(100, 6))
+    y = X @ rng.normal(size=6)
+    model = FFMRegressor(
+        optimizer="adam", random_state=0, max_iter=60, learning_rate=0.05
+    ).fit(X, y, field_ids=_field_ids(6))
+    baseline = squared_loss(y, np.full_like(y, y.mean()))
+    assert squared_loss(y, model.predict(X)) < 0.5 * baseline
+
+
 def test_adam_multiclass_learns():
     rng = np.random.default_rng(2)
     X = rng.normal(size=(150, 6))
@@ -245,7 +269,9 @@ def test_l1_requires_ftrl(cls):
 
 
 @pytest.mark.parametrize("cls", ALL)
-def test_ftrl_early_stopping_not_implemented(cls):
-    X, y = _separable_binary(n=40)
-    with pytest.raises(NotImplementedError):
-        _fit(_make(cls, optimizer="ftrl", early_stopping=True), X, y)
+def test_ftrl_early_stopping_works(cls):
+    # FTRL + early stopping rounds the (z, n) state via the reference path.
+    X, y = _separable_binary(n=120)
+    model = _fit(_make(cls, optimizer="ftrl", early_stopping=True, patience=5), X, y)
+    assert 1 <= model.n_iter_ <= 40
+    assert np.all(np.isfinite(model.predict(X).astype(float)))

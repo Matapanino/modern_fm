@@ -4,9 +4,9 @@ import pickle
 
 import numpy as np
 import pytest
-from modern_fm import FFMClassifier, FMClassifier, FMRegressor, NotFittedError
+from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, FMRegressor, NotFittedError
 
-ESTIMATORS = [FMClassifier, FMRegressor, FFMClassifier]
+ESTIMATORS = [FMClassifier, FMRegressor, FFMClassifier, FFMRegressor]
 
 
 def _fit(cls, seed=0):
@@ -16,6 +16,8 @@ def _fit(cls, seed=0):
     model = cls(random_state=0, max_iter=20)
     if cls is FFMClassifier:
         model.fit(X, y, field_ids=np.arange(5) % 2)
+    elif cls is FFMRegressor:
+        model.fit(X, X[:, 0], field_ids=np.arange(5) % 2)
     elif cls is FMRegressor:
         model.fit(X, X[:, 0])
     else:
@@ -31,7 +33,7 @@ def test_save_load_preserves_predictions(cls, tmp_path):
     loaded = cls.load_model(path)
     np.testing.assert_array_equal(loaded.predict(X), model.predict(X))
     assert loaded.get_params() == model.get_params()
-    if cls is not FMRegressor:
+    if cls not in (FMRegressor, FFMRegressor):
         np.testing.assert_array_equal(loaded.predict_proba(X), model.predict_proba(X))
         np.testing.assert_array_equal(loaded.classes_, model.classes_)
 

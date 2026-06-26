@@ -11,10 +11,9 @@ float64; learned attributes are stored in the requested `dtype`.
 Optimizers: SGD, AdaGrad, Adam ("adam", with beta_1/beta_2/epsilon), and
 FTRL-Proximal ("ftrl", with l1_linear/l1_factors/ftrl_beta; L1 yields exact zeros).
 
-Early stopping supports every optimizer except FTRL and works with multiclass;
-those state hand-offs round-trip through the NumPy reference path. Not yet
-supported (raises NotImplementedError at fit time): early stopping with the FTRL
-optimizer. See docs/roadmap.md.
+Early stopping supports every optimizer (SGD/AdaGrad/Adam/FTRL) and works with
+multiclass; the Adam, FTRL, and multiclass state hand-offs round-trip through the
+NumPy reference path. See docs/roadmap.md.
 """
 
 from __future__ import annotations
@@ -30,12 +29,14 @@ from sklearn.utils.validation import check_consistent_length, column_or_1d, vali
 from . import _backend
 from ._base import ModelIOMixin, check_is_fitted
 from ._early_stop import normalize_eval_set, run_epochs, split_indices
+from ._partial import make_opt_state, partial_fit_classes, warm_resume
 from ._reference_train import (
     OPTIMIZERS,
     init_fm_multiclass_params,
     init_fm_params,
     make_row_orders,
     new_adam_state,
+    new_ftrl_state,
 )
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
 
@@ -159,14 +160,6 @@ def _resolve_n_jobs(n_jobs):
     return int(n_jobs)
 
 
-def _no_ftrl_early_stopping(optimizer, early_stopping, eval_set):
-    """FTRL keeps per-coordinate (z, n) state that is not round-tripped across
-    epochs, so it is incompatible with early stopping in v0.2. (Adam IS supported
-    via the reference-path moment round-trip in `_fit_es`; see docs/roadmap.md.)"""
-    if optimizer == "ftrl" and (early_stopping or eval_set is not None):
-        raise NotImplementedError(f"early stopping with the ftrl optimizer {_PHASE4}")
-
-
 class _FMBase(BaseEstimator, ModelIOMixin):
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()
@@ -193,8 +186,13 @@ class _FMBase(BaseEstimator, ModelIOMixin):
             raise ValueError(f"y has shape {y.shape}, expected ({n_rows},)")
         if not np.all(np.isfinite(y)):
             raise ValueError("y contains NaN or infinity")
+        resumed = warm_resume(self)
         rng = np.random.default_rng(self.random_state)
-        params = init_fm_params(rng, n_features, self.n_factors, self.init_scale)
+        if resumed is None:
+            params = init_fm_params(rng, n_features, self.n_factors, self.init_scale)
+            opt = {}
+        else:
+            params, opt = resumed
         row_orders = make_row_orders(rng, n_rows, self.max_iter)
         w0, w, V = _backend.fm_fit(
             X, y, params,
@@ -213,6 +211,7 @@ class _FMBase(BaseEstimator, ModelIOMixin):
             batch_size=self.batch_size,
             n_jobs=_resolve_n_jobs(self.n_jobs),
             sample_weight=sample_weight,
+            **opt,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
         self.w0_ = float(w0)
@@ -240,16 +239,29 @@ class _FMBase(BaseEstimator, ModelIOMixin):
             X_tr, y_tr, sw_tr = X, y_train, sample_weight
             X_val, y_val = eval_val
         n_tr = X_tr.shape[0]
-        init = init_fm_params(rng, n_features, self.n_factors, self.init_scale)
+        resumed = warm_resume(self)
+        if resumed is None:
+            init = init_fm_params(rng, n_features, self.n_factors, self.init_scale)
+            opt = None
+        else:
+            init, opt = resumed
         row_orders = make_row_orders(rng, n_tr, self.max_iter)
-        # AdaGrad/SGD round-trip accumulators via `state`; Adam round-trips its
-        # moments via `adam_state` (which routes through the NumPy reference).
+        # AdaGrad/SGD round-trip accumulators via `state`; Adam and FTRL round-trip
+        # their state (moments / (z, n)) via `adam_state` / `ftrl_state`, which route
+        # through the NumPy reference path. warm_start resumes the persisted state.
         is_adam = self.optimizer == "adam"
-        state = (
-            None if is_adam
-            else [0.0, np.zeros(n_features), np.zeros((n_features, self.n_factors))]
-        )
-        adam_state = new_adam_state(init[0], init[1], init[2]) if is_adam else None
+        is_ftrl = self.optimizer == "ftrl"
+        if opt is not None:
+            state, adam_state, ftrl_state = (
+                opt.get("state"), opt.get("adam_state"), opt.get("ftrl_state")
+            )
+        else:
+            state = (
+                None if (is_adam or is_ftrl)
+                else [0.0, np.zeros(n_features), np.zeros((n_features, self.n_factors))]
+            )
+            adam_state = new_adam_state(init[0], init[1], init[2]) if is_adam else None
+            ftrl_state = new_ftrl_state(init[0], init[1], init[2]) if is_ftrl else None
         work = [init[0], init[1], init[2]]
         metric = logistic_loss if loss == "logistic" else squared_loss
 
@@ -260,7 +272,7 @@ class _FMBase(BaseEstimator, ModelIOMixin):
                 l2_factors=self.l2_factors, l1_linear=self.l1_linear, l1_factors=self.l1_factors,
                 row_orders=row_orders[e : e + 1], ftrl_beta=self.ftrl_beta,
                 batch_size=self.batch_size, n_jobs=_resolve_n_jobs(self.n_jobs),
-                sample_weight=sw_tr, state=state, adam_state=adam_state,
+                sample_weight=sw_tr, state=state, adam_state=adam_state, ftrl_state=ftrl_state,
             )
 
         def evaluate():
@@ -285,6 +297,53 @@ class _FMBase(BaseEstimator, ModelIOMixin):
         check_is_fitted(self)
         X = _validate_X(self, X, reset=False)
         return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_)
+
+    def _advance_one_epoch(self, X, y, loss, sample_weight, *, multiclass, first_call, n_classes):
+        """One natural-order pass continuing ``self._opt_state`` (the partial_fit
+        primitive). Inits params + optimizer state on the first call; writes back
+        w0_/w_/V_ in ``dtype`` and bumps n_iter_. Adam/FTRL/multiclass ride the
+        NumPy reference path; binary sgd/adagrad reuse the Rust ``state`` round-trip."""
+        n_rows, n_features = X.shape
+        out_dtype = np.float32 if self.dtype == "float32" else np.float64
+        if first_call:
+            rng = np.random.default_rng(self.random_state)
+            if multiclass:
+                w0, w, V = init_fm_multiclass_params(
+                    rng, n_classes, n_features, self.n_factors, self.init_scale
+                )
+            else:
+                w0, w, V = init_fm_params(rng, n_features, self.n_factors, self.init_scale)
+            self._opt_state = make_opt_state(self.optimizer, w0, w, V)
+            self.n_iter_ = 0
+        else:
+            w0 = self.w0_.astype(np.float64) if multiclass else float(self.w0_)
+            w = self.w_.astype(np.float64)
+            V = self.V_.astype(np.float64)
+            if getattr(self, "_opt_state", None) is None:
+                self._opt_state = make_opt_state(self.optimizer, w0, w, V)
+        row_orders = np.arange(n_rows, dtype=np.int64)[None, :]  # one pass, natural order
+        common = dict(
+            optimizer=self.optimizer, learning_rate=self.learning_rate,
+            l2_linear=self.l2_linear, l2_factors=self.l2_factors,
+            l1_linear=self.l1_linear, l1_factors=self.l1_factors, row_orders=row_orders,
+            beta_1=self.beta_1, beta_2=self.beta_2, epsilon=self.epsilon,
+            ftrl_beta=self.ftrl_beta, batch_size=self.batch_size, sample_weight=sample_weight,
+        )
+        if multiclass:
+            w0, w, V = _backend.fm_fit_multiclass(
+                X, y, (w0, w, V), label_smoothing=self.label_smoothing, **common, **self._opt_state
+            )
+            self.w0_ = w0.astype(out_dtype)
+        else:
+            w0, w, V = _backend.fm_fit(
+                X, y, (w0, w, V), loss=loss, n_jobs=_resolve_n_jobs(self.n_jobs),
+                **common, **self._opt_state,
+            )
+            self.w0_ = float(w0)
+        self.w_ = w.astype(out_dtype)
+        self.V_ = V.astype(out_dtype)
+        self.n_iter_ += 1
+        return self
 
 
 class FMClassifier(ClassifierMixin, _FMBase):
@@ -313,6 +372,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
         validation_fraction=0.1,
         patience=10,
         min_delta=0.0,
+        warm_start=False,
         dtype="float32",
         backend="rust_cpu",
         random_state=None,
@@ -340,6 +400,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
         self.validation_fraction = validation_fraction
         self.patience = patience
         self.min_delta = min_delta
+        self.warm_start = warm_start
         self.dtype = dtype
         self.backend = backend
         self.random_state = random_state
@@ -351,7 +412,6 @@ class FMClassifier(ClassifierMixin, _FMBase):
 
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
-        _no_ftrl_early_stopping(self.optimizer, self.early_stopping, eval_set)
         if self.loss not in ("logistic", "softmax"):
             raise ValueError(f"unknown loss {self.loss!r} for FMClassifier")
         X = _validate_X(self, X, reset=True)
@@ -386,6 +446,39 @@ class FMClassifier(ClassifierMixin, _FMBase):
             return self._fit_es(X, y_train, y01, "logistic", sw, eval_val)
         return self._fit_core(X, y_train, "logistic", sample_weight=sw)
 
+    def partial_fit(self, X, y, classes=None, sample_weight=None):
+        """Incremental fit on a chunk: one pass in natural row order, continuing the
+        optimizer state. Pass ``classes`` (all labels) on the first call (sklearn
+        convention); binary-vs-multiclass is frozen then. See docs/api_design.md."""
+        self._validate_common()
+        if self.loss not in ("logistic", "softmax"):
+            raise ValueError(f"unknown loss {self.loss!r} for FMClassifier")
+        if isinstance(self.class_weight, str) and self.class_weight == "balanced":
+            raise ValueError("class_weight='balanced' is not supported by partial_fit")
+        first_call = not hasattr(self, "n_features_in_")
+        X = _validate_X(self, X, reset=first_call)
+        _, y = partial_fit_classes(self, y, classes)
+        check_consistent_length(X, y)
+        n_classes = self.classes_.shape[0]
+        multiclass = n_classes > 2 or self.loss == "softmax"
+        if multiclass:
+            if not 0.0 <= self.label_smoothing < 1.0:
+                raise ValueError(f"label_smoothing must be in [0, 1), got {self.label_smoothing}")
+            y_target = np.searchsorted(self.classes_, y)
+            sw = _combine_weights(
+                y_target, self.classes_, sample_weight, self.class_weight, X.shape[0]
+            )
+            return self._advance_one_epoch(
+                X, y_target, "softmax", sw, multiclass=True, first_call=first_call,
+                n_classes=n_classes,
+            )
+        y01 = (y == self.classes_[1]).astype(np.float64)
+        sw = _combine_weights(y01, self.classes_, sample_weight, self.class_weight, X.shape[0])
+        y_train = _smooth(y01, self.label_smoothing)
+        return self._advance_one_epoch(
+            X, y_train, "logistic", sw, multiclass=False, first_call=first_call, n_classes=n_classes
+        )
+
     def _fit_multiclass(self, X, y, sample_weight):
         n_rows, n_features = X.shape
         n_classes = self.classes_.shape[0]
@@ -393,10 +486,15 @@ class FMClassifier(ClassifierMixin, _FMBase):
             raise ValueError(f"label_smoothing must be in [0, 1), got {self.label_smoothing}")
         y_idx = np.searchsorted(self.classes_, y)  # classes_ is sorted (np.unique)
         sw = _combine_weights(y_idx, self.classes_, sample_weight, self.class_weight, n_rows)
+        resumed = warm_resume(self)
         rng = np.random.default_rng(self.random_state)
-        params = init_fm_multiclass_params(
-            rng, n_classes, n_features, self.n_factors, self.init_scale
-        )
+        if resumed is None:
+            params = init_fm_multiclass_params(
+                rng, n_classes, n_features, self.n_factors, self.init_scale
+            )
+            opt = {}
+        else:
+            params, opt = resumed
         row_orders = make_row_orders(rng, n_rows, self.max_iter)
         w0, w, V = _backend.fm_fit_multiclass(
             X, y_idx, params,
@@ -414,6 +512,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
             ftrl_beta=self.ftrl_beta,
             batch_size=self.batch_size,
             sample_weight=sw,
+            **opt,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
         self.w0_ = w0.astype(out_dtype)
@@ -443,16 +542,28 @@ class FMClassifier(ClassifierMixin, _FMBase):
             X_tr, y_tr, sw_tr = X, y_idx, sw
             X_val, y_val = eval_val
         n_tr = X_tr.shape[0]
-        init = init_fm_multiclass_params(
-            rng, n_classes, n_features, self.n_factors, self.init_scale
-        )
+        resumed = warm_resume(self)
+        if resumed is None:
+            init = init_fm_multiclass_params(
+                rng, n_classes, n_features, self.n_factors, self.init_scale
+            )
+            opt = None
+        else:
+            init, opt = resumed
         row_orders = make_row_orders(rng, n_tr, self.max_iter)
         is_adam = self.optimizer == "adam"
-        state = None if is_adam else [
-            np.zeros(n_classes), np.zeros((n_classes, n_features)),
-            np.zeros((n_classes, n_features, self.n_factors)),
-        ]
-        adam_state = new_adam_state(init[0], init[1], init[2]) if is_adam else None
+        is_ftrl = self.optimizer == "ftrl"
+        if opt is not None:
+            state, adam_state, ftrl_state = (
+                opt.get("state"), opt.get("adam_state"), opt.get("ftrl_state")
+            )
+        else:
+            state = None if (is_adam or is_ftrl) else [
+                np.zeros(n_classes), np.zeros((n_classes, n_features)),
+                np.zeros((n_classes, n_features, self.n_factors)),
+            ]
+            adam_state = new_adam_state(init[0], init[1], init[2]) if is_adam else None
+            ftrl_state = new_ftrl_state(init[0], init[1], init[2]) if is_ftrl else None
         work = [init[0], init[1], init[2]]
 
         def train_epoch(e):
@@ -463,7 +574,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
                 row_orders=row_orders[e : e + 1], label_smoothing=self.label_smoothing,
                 beta_1=self.beta_1, beta_2=self.beta_2, epsilon=self.epsilon,
                 ftrl_beta=self.ftrl_beta, batch_size=self.batch_size, sample_weight=sw_tr,
-                state=state, adam_state=adam_state,
+                state=state, adam_state=adam_state, ftrl_state=ftrl_state,
             )
 
         def evaluate():
@@ -536,6 +647,7 @@ class FMRegressor(RegressorMixin, _FMBase):
         validation_fraction=0.1,
         patience=10,
         min_delta=0.0,
+        warm_start=False,
         dtype="float32",
         backend="rust_cpu",
         random_state=None,
@@ -560,6 +672,7 @@ class FMRegressor(RegressorMixin, _FMBase):
         self.validation_fraction = validation_fraction
         self.patience = patience
         self.min_delta = min_delta
+        self.warm_start = warm_start
         self.dtype = dtype
         self.backend = backend
         self.random_state = random_state
@@ -571,7 +684,6 @@ class FMRegressor(RegressorMixin, _FMBase):
 
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
-        _no_ftrl_early_stopping(self.optimizer, self.early_stopping, eval_set)
         X = _validate_X(self, X, reset=True)
         sw = _check_sample_weight(sample_weight, X.shape[0])
         y = column_or_1d(y, warn=True).astype(np.float64)
@@ -585,6 +697,21 @@ class FMRegressor(RegressorMixin, _FMBase):
                 eval_val = (_check_X(Xv, X.shape[1]), np.asarray(yv, dtype=np.float64))
             return self._fit_es(X, y, y, "squared", sw, eval_val)
         return self._fit_core(X, y, "squared", sample_weight=sw)
+
+    def partial_fit(self, X, y, sample_weight=None):
+        """Incremental fit on a chunk: one pass in natural row order, continuing the
+        optimizer state. See docs/api_design.md."""
+        self._validate_common()
+        first_call = not hasattr(self, "n_features_in_")
+        X = _validate_X(self, X, reset=first_call)
+        sw = _check_sample_weight(sample_weight, X.shape[0])
+        y = column_or_1d(y, warn=True).astype(np.float64)
+        check_consistent_length(X, y)
+        if not np.all(np.isfinite(y)):
+            raise ValueError("y contains NaN or infinity")
+        return self._advance_one_epoch(
+            X, y, "squared", sw, multiclass=False, first_call=first_call, n_classes=None
+        )
 
     def predict(self, X):
         return self._raw_scores(X)

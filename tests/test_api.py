@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
-from modern_fm import FFMClassifier, FMClassifier, FMRegressor
+from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, FMRegressor
 
-ESTIMATORS = [FMClassifier, FMRegressor, FFMClassifier]
+ESTIMATORS = [FMClassifier, FMRegressor, FFMClassifier, FFMRegressor]
 
 
 def _tiny_binary(n=6, d=3):
@@ -13,8 +13,12 @@ def _tiny_binary(n=6, d=3):
 
 
 def _ffm_kwargs(cls, n_features):
-    """field_ids kwarg required by FFMClassifier.fit, empty for FM estimators."""
-    return {"field_ids": np.zeros(n_features, dtype=int)} if cls is FFMClassifier else {}
+    """field_ids kwarg accepted by FFM estimators' fit, empty for FM estimators."""
+    return (
+        {"field_ids": np.zeros(n_features, dtype=int)}
+        if cls in (FFMClassifier, FFMRegressor)
+        else {}
+    )
 
 
 @pytest.mark.parametrize("cls", ESTIMATORS)

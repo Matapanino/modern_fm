@@ -53,15 +53,16 @@ def test_fm_training_parity(rng, loss, optimizer):
     )
 
 
+@pytest.mark.parametrize("loss", ["logistic", "squared"])
 @pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
-def test_ffm_training_parity(rng, optimizer):
+def test_ffm_training_parity(rng, loss, optimizer):
     n, d, n_fields, k = 30, 8, 3, 2
     X = random_sparse_dense_X(rng, n, d, density=0.5)
-    y = (rng.random(n) > 0.5).astype(np.float64)
+    y = rng.normal(size=n) if loss == "squared" else (rng.random(n) > 0.5).astype(np.float64)
     field_ids = rng.integers(0, n_fields, size=d)
     params = init_ffm_params(rng, d, n_fields, k, 0.05)
     kwargs = dict(
-        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        loss=loss, optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
         row_orders=make_row_orders(rng, n, epochs=2),
     )
     _assert_params_close(
@@ -130,15 +131,16 @@ def test_fm_training_parity_sample_weight(rng, optimizer):
     )
 
 
-def test_ffm_training_parity_sample_weight(rng):
+@pytest.mark.parametrize("loss", ["logistic", "squared"])
+def test_ffm_training_parity_sample_weight(rng, loss):
     n, d, n_fields, k = 25, 7, 3, 2
     X = random_sparse_dense_X(rng, n, d, density=0.5)
-    y = (rng.random(n) > 0.5).astype(np.float64)
+    y = rng.normal(size=n) if loss == "squared" else (rng.random(n) > 0.5).astype(np.float64)
     field_ids = rng.integers(0, n_fields, size=d)
     sw = rng.uniform(0.1, 3.0, size=n)
     params = init_ffm_params(rng, d, n_fields, k, 0.05)
     kwargs = dict(
-        optimizer="adagrad", learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        loss=loss, optimizer="adagrad", learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
         row_orders=make_row_orders(rng, n, epochs=2), sample_weight=sw,
     )
     _assert_params_close(
@@ -274,8 +276,8 @@ def test_adam_nondefault_hyperparams_parity(rng):
     n_fields = 3
     field_ids = rng.integers(0, n_fields, size=d)
     pf = init_ffm_params(rng, d, n_fields, k, 0.05)
-    kwf = dict(optimizer="adam", learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
-               row_orders=ro, **betas)
+    kwf = dict(loss="logistic", optimizer="adam", learning_rate=0.1, l2_linear=1e-3,
+               l2_factors=1e-3, row_orders=ro, **betas)
     _assert_params_close(
         _backend.ffm_fit(X, y, field_ids, pf, **kwf),
         ffm_fit_reference(X, y, field_ids, pf, **kwf),
@@ -319,14 +321,15 @@ def test_fm_minibatch_parity(rng, loss, optimizer, batch_size):
 
 @pytest.mark.parametrize("batch_size", BATCH_SIZES)
 @pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
-def test_ffm_minibatch_parity(rng, optimizer, batch_size):
+@pytest.mark.parametrize("loss", ["logistic", "squared"])
+def test_ffm_minibatch_parity(rng, loss, optimizer, batch_size):
     n, d, n_fields, k = 30, 8, 3, 2
     X = random_sparse_dense_X(rng, n, d, density=0.5)
-    y = (rng.random(n) > 0.5).astype(np.float64)
+    y = rng.normal(size=n) if loss == "squared" else (rng.random(n) > 0.5).astype(np.float64)
     field_ids = rng.integers(0, n_fields, size=d)
     params = init_ffm_params(rng, d, n_fields, k, 0.05)
     kwargs = dict(
-        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        loss=loss, optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
         row_orders=make_row_orders(rng, n, epochs=2), batch_size=batch_size,
     )
     _assert_params_close(
@@ -414,14 +417,15 @@ def test_fm_parallel_matches_serial(rng, optimizer, n_jobs):
 
 @pytest.mark.parametrize("n_jobs", [2, 4])
 @pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam"])
-def test_ffm_parallel_matches_serial(rng, optimizer, n_jobs):
+@pytest.mark.parametrize("loss", ["logistic", "squared"])
+def test_ffm_parallel_matches_serial(rng, loss, optimizer, n_jobs):
     n, d, n_fields, k = 50, 10, 3, 2
     X = random_sparse_dense_X(rng, n, d, density=0.6)
-    y = (rng.random(n) > 0.5).astype(np.float64)
+    y = rng.normal(size=n) if loss == "squared" else (rng.random(n) > 0.5).astype(np.float64)
     field_ids = rng.integers(0, n_fields, size=d)
     params = init_ffm_params(rng, d, n_fields, k, 0.05)
     kw = dict(
-        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        loss=loss, optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
         row_orders=make_row_orders(rng, n, epochs=3), batch_size=8,
     )
     serial = _backend.ffm_fit(X, y, field_ids, params, **kw, n_jobs=1)
@@ -451,15 +455,17 @@ def test_fm_ftrl_parity(rng, loss, batch_size, l1):
 
 
 @pytest.mark.parametrize("l1", [0.0, 0.02])
-def test_ffm_ftrl_parity(rng, l1):
+@pytest.mark.parametrize("loss", ["logistic", "squared"])
+def test_ffm_ftrl_parity(rng, loss, l1):
     n, d, n_fields, k = 30, 8, 3, 2
     X = random_sparse_dense_X(rng, n, d, density=0.5)
-    y = (rng.random(n) > 0.5).astype(np.float64)
+    y = rng.normal(size=n) if loss == "squared" else (rng.random(n) > 0.5).astype(np.float64)
     field_ids = rng.integers(0, n_fields, size=d)
     params = init_ffm_params(rng, d, n_fields, k, 0.05)
     kw = dict(
-        optimizer="ftrl", learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3, l1_linear=l1,
-        l1_factors=l1, ftrl_beta=1.0, row_orders=make_row_orders(rng, n, epochs=2), batch_size=4,
+        loss=loss, optimizer="ftrl", learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        l1_linear=l1, l1_factors=l1, ftrl_beta=1.0,
+        row_orders=make_row_orders(rng, n, epochs=2), batch_size=4,
     )
     _assert_params_close(
         _backend.ffm_fit(X, y, field_ids, params, **kw),

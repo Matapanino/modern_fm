@@ -46,11 +46,7 @@
 - [x] full sklearn `check_estimator` compatibility (estimators subclass sklearn
   `BaseEstimator` + `Classifier`/`RegressorMixin`; scikit-learn is now a runtime
   dependency). `FFMClassifier.fit(X, y)` defaults `field_ids` to per-column.
-- `partial_fit`, `warm_start=True`
-- pairwise dropout, interaction pruning
-- calibration helper
 - [x] libffm format loader/exporter (`load_libffm` / `dump_libffm`, round-trip tested)
-- model inspection: top interactions
 - [x] pandas/polars input (DataFrames via sklearn `validate_data`;
   `feature_names_in_` recorded, column reorder rejected at predict)
 - [x] CI + release pipeline: `.github/workflows/ci.yml` (pytest + ruff across
@@ -67,11 +63,115 @@
 - [x] FFM multiclass softmax (`ffm_fit_multiclass_csr`): one FFM per class coupled
   by softmax, all optimizers (SGD/AdaGrad/Adam/FTRL) + mini-batch, parity-tested
   vs the NumPy reference; `FFMClassifier` auto-detects >2 classes / `loss="softmax"`.
-  FTRL + early stopping and multiclass FFM + early stopping remain (niche).
+  FTRL + early stopping and multiclass FFM + early stopping are scheduled for v0.4 (see below).
 
-## v0.3+ — Model variants & GPU
+## v0.4 — API completeness & online learning
 
-- FwFM, AFM, FEFM/FmFM (each gets its own math spec before implementation)
+Closes the (model × task × optimizer × early-stopping) matrix and adds
+streaming / out-of-core training. No new model family, no release-infra work.
+
+- [x] **FFMRegressor** — squared-loss FFM, the regression counterpart to
+  `FMRegressor`. _Priority: P0._
+  - DoD: `RegressorMixin` estimator; Rust kernel + NumPy-reference parity test
+    (atol/rtol like existing FFM tests); dense+CSR equivalence; save/load +
+    pickle round-trip; `check_estimator` passes; exported in `__all__`;
+    `docs/api_design.md` + CHANGELOG updated. `_reference*.py` unchanged.
+- [x] **FTRL + early stopping** — round-trip FTRL's per-coordinate `(z, n)`
+  state across epochs (mirror Adam's `adam_state` hand-off). _Priority: P1._
+  - DoD: remove the `_no_ftrl_early_stopping` guard (fm.py/ffm.py); per-epoch
+    hand-off equals one multi-epoch call exactly (test); FM binary/multiclass +
+    FFM; state carried via the reference path (no `_reference*.py` speed change).
+- [x] **Multiclass FFM + early stopping** — per-class optimizer state
+  round-tripped for FFM multiclass (mirror FM-multiclass + ES). _Priority: P1._
+  - DoD: remove the multiclass guard in `ffm.py`; round-trip equals a single
+    multi-epoch call (test); softmax cross-entropy eval metric.
+- [x] **partial_fit + warm_start** — incremental/streaming training for FM & FFM.
+  _Priority: P0._
+  - DoD: `partial_fit(X, y, classes=...)` (sklearn first-call `classes`
+    convention) and `warm_start=True` continue from existing params + optimizer
+    state; `classes_` retained; N sequential `partial_fit` calls equal one `fit`
+    on the concatenated data under a matched epoch/batch schedule (exact via
+    optimizer-state round-trip); contract added to `docs/api_design.md`;
+    reference parity preserved; CHANGELOG updated.
+
+## v1.0 — stable release
+
+Headline model variant + production-CTR features + docs/bench polish + API
+freeze. Shipping this milestone = tagging v1.0.0.
+
+- [ ] **FwFM (`FwFMClassifier`)** — Field-weighted FM; the 1.0 headline variant.
+  _Priority: P0._
+  - DoD: write `docs/math_spec_fwfm.md` FIRST (field-pair weights
+    `r_{f(i),f(j)}`, exact prediction + loss); then NumPy reference → Rust kernel
+    → `FwFMClassifier`, with a parity test at each layer; existing FM/FFM
+    formulas untouched (no DeepFM/AFM substitution); `check_estimator`,
+    save/load, `__all__` + api_design + CHANGELOG. (AFM/FEFM follow this template
+    post-1.0.)
+- [ ] **Probability calibration** — calibrated `predict_proba` for CTR.
+  _Priority: P1._
+  - DoD: sklearn `CalibratedClassifierCV`-compatible (recommended) or built-in
+    Platt/isotonic; ECE/reliability test shows improvement on synthetic
+    miscalibrated data; example + docs.
+- [ ] **Model inspection (top interactions)** — strongest learned pairwise
+  interactions. _Priority: P1._
+  - DoD: API returning top-`|<v_i, v_j>|` feature pairs for a fitted FM/FFM
+    (e.g. `top_interactions(k)`); tested on a synthetic model with a known
+    dominant pair; docs + example.
+- [ ] **Real-data benchmark** — Criteo/Avazu *sample* (not full). _Priority: P1._
+  - DoD: `benchmarks/bench_criteo_like.py` reporting test AUC + fit time on a
+    small vendored/downloaded sample; README results table; fixed seeds + machine
+    specs (benchmark_plan rules); no tuning-to-benchmark.
+- [ ] **Documentation site** — published API/usage docs. _Priority: P1._
+  - DoD: mkdocs-material (recommended) or Sphinx — install, quickstart, API
+    reference, math specs, examples; GitHub Pages auto-deploy via CI; linked from
+    README.
+- [ ] **API freeze + backward-compat policy** — _Priority: P0._
+  - DoD: audit public `__all__` (estimators, encoder, libffm I/O, errors); every
+    public estimator + constructor param documented in `docs/api_design.md`;
+    write a SemVer / backward-compatibility policy (`docs/compat_policy.md`);
+    `save_model` format carries a version tag and stays forward-readable; no
+    undocumented `NotImplementedError` in the public surface.
+- [ ] **Release 1.0.0** — _Priority: P0._
+  - DoD: bump version to `1.0.0` (`__init__.py`, `pyproject.toml`, `Cargo.toml`);
+    CHANGELOG `1.0.0` entry; full CI matrix green (3 OS × py3.10–3.13 + cargo
+    test/clippy); tag `v1.0.0` → trusted-publishing `release.yml`.
+
+## v1.0 — criteria
+
+The release is "stable" only when all of these hold (the global gate; the
+per-item DoDs above are the local checks):
+
+1. **Feature-matrix completeness** — every documented cell of
+   (model {FM, FFM} × task {regression, binary, multiclass} × optimizer
+   {sgd, adagrad, adam, ftrl} × early-stopping) works, or is *intentionally and
+   visibly documented* as out-of-scope. No surprise `NotImplementedError` in the
+   public surface (FFMRegressor, FTRL+ES, multiclass-FFM+ES all closed).
+2. **Reference parity** — every fast/Rust path proven equal to the NumPy
+   reference; `_reference*.py` never changed for speed (CLAUDE.md rule, now a
+   release gate).
+3. **Numerical stability** — no inf/nan at extreme logits (logsumexp/log1p),
+   tested.
+4. **Reproducibility** — identical results under a fixed `random_state` across
+   the supported matrix.
+5. **Serialization stability** — `save_model`/`load_model` + pickle round-trip
+   preserve predictions; on-disk format carries a version tag.
+6. **sklearn compatibility** — `check_estimator` passes for every public
+   estimator; works in `Pipeline` / `GridSearchCV` / `clone`.
+7. **API frozen & documented** — `__all__` audited; every public param in
+   `docs/api_design.md`; a written backward-compatibility / SemVer policy.
+8. **Quality gates green** — `pytest` green + `ruff` clean across the CI matrix
+   (3 OS × py3.10–3.13); `cargo test` + `cargo clippy` warning-free.
+9. **Docs site live** — GitHub Pages: install, quickstart, API reference, math
+   specs, examples.
+10. **Real-data evidence** — Criteo/Avazu-sample AUC + timing in the README.
+11. **Production CTR features** — calibrated `predict_proba` + top-interaction
+    inspection shipped.
+12. **Released** — version `1.0.0`, CHANGELOG complete, `v1.0.0` tag published.
+
+## Post-1.0 — model variants & GPU
+
+- AFM, FEFM/FmFM (each gets its own math spec first, per the FwFM template)
+- pairwise dropout, interaction pruning
 - PyTorch-compatible backend prototype
 - CUDA backend investigation (cuML-style `device=`/`backend=` switch)
 

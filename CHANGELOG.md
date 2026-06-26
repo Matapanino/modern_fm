@@ -3,6 +3,31 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`FFMRegressor`**: squared-loss Field-aware Factorization Machine, the
+  regression counterpart to `FMRegressor` (`RegressorMixin`; `fit(X, y, field_ids=…)`
+  and `predict`; SGD/AdaGrad/Adam/FTRL, mini-batch, `n_jobs`, early stopping). The
+  FFM training kernel (Rust + NumPy reference) gained a `loss` parameter
+  (`"logistic"` | `"squared"`); `check_estimator`-clean, `save_model`/`load_model`
+  + pickle round-trip, exported in `__all__`. `FFMClassifier` and `FFMRegressor`
+  now share a common `_FFMBase` (mirrors `_FMBase`).
+- **FTRL + early stopping**: FTRL's per-coordinate `(z, n)` state now round-trips
+  across epochs (a `ftrl_state` hand-off mirroring Adam's), so `early_stopping` /
+  `eval_set` work with `optimizer="ftrl"` for FM (binary + multiclass) and FFM. The
+  previous `NotImplementedError` guard is removed.
+- **Multiclass FFM + early stopping**: per-class optimizer state (AdaGrad / Adam /
+  FTRL) round-trips for multiclass `FFMClassifier`, evaluated with a softmax
+  cross-entropy metric — `early_stopping` / `eval_set` now work for multiclass FFM.
+- **`partial_fit` + `warm_start`**: incremental / streaming training for all four
+  estimators (`partial_fit(X, y, classes=…)`, plus `field_ids=` for FFM). Each call
+  runs one natural-order pass continuing the persisted optimizer state, so N chunked
+  calls equal one pass over the concatenated data bit-for-bit (`dtype="float64"`,
+  `n_jobs=1`, `batch_size` dividing the chunk lengths). `warm_start=True` makes `fit`
+  resume from the previous solution + optimizer state. This closes the v0.4 milestone
+  (no `NotImplementedError` left in the public surface).
+
 ## [0.3.0] - 2026-06-26
 
 ### Added

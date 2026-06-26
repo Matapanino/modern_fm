@@ -8,7 +8,7 @@
 use rayon::prelude::*;
 
 use crate::data::{dense_row_nonzeros, CsrView};
-use crate::optimizer::{sigmoid, step_coord, step_param, AdamState, FtrlState, Optimizer};
+use crate::optimizer::{loss_grad, step_coord, step_param, AdamState, FtrlState, Loss, Optimizer};
 
 /// Score one row given its nonzero (index, value) pairs.
 /// `v` is row-major (n_features, n_fields, k).
@@ -260,6 +260,7 @@ fn accumulate_chunk(
     v: &[f64],
     n_fields: usize,
     k: usize,
+    loss: Loss,
 ) {
     let mut idx_buf: Vec<usize> = Vec::new();
     for &r in chunk {
@@ -267,12 +268,12 @@ fn accumulate_chunk(
         idx_buf.clear();
         idx_buf.extend(indices.iter().map(|&i| i as usize));
         let s = ffm_score_row(&idx_buf, values, field_ids, w0, w, v, n_fields, k);
-        let g = sample_weight[r as usize] * (sigmoid(s) - y[r as usize]);
+        let g = sample_weight[r as usize] * loss_grad(loss, s, y[r as usize]);
         acc.add_row(&idx_buf, values, field_ids, g, v, n_fields, k);
     }
 }
 
-/// Train an FFM (logistic loss) in place (docs/optimization_spec.md).
+/// Train an FFM in place (squared or logistic loss; docs/optimization_spec.md).
 ///
 /// Mirrors `_reference_train.ffm_fit_reference`: each epoch's `n_rows` entries
 /// in `row_orders` are consumed in `batch_size` chunks; scores come from the
@@ -295,6 +296,7 @@ pub fn fit_csr(
     acc_v: &mut [f64],
     n_fields: usize,
     k: usize,
+    loss: Loss,
     opt: Optimizer,
     lr: f64,
     l1_linear: f64,
@@ -317,6 +319,7 @@ pub fn fit_csr(
             if n_threads == 1 {
                 accumulate_chunk(
                     &mut accs[0], batch, csr, y, sample_weight, field_ids, *w0, w, v, n_fields, k,
+                    loss,
                 );
             } else {
                 let chunk_len = batch.len().div_ceil(n_threads);
@@ -326,7 +329,7 @@ pub fn fit_csr(
                     .for_each(|(acc, chunk)| {
                         accumulate_chunk(
                             acc, chunk, csr, y, sample_weight, field_ids, *w0, w_ro, v_ro,
-                            n_fields, k,
+                            n_fields, k, loss,
                         );
                     });
                 let (head, tail) = accs.split_at_mut(1);
@@ -437,6 +440,7 @@ pub fn fit_multiclass_csr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimizer::sigmoid;
 
     #[test]
     fn tiny_hand_computed_example() {
@@ -490,7 +494,7 @@ mod tests {
         fit_csr(
             &csr, &y, &[1.0, 1.0], &field_ids, &mut w0, &mut w, &mut v,
             &mut a0, &mut aw, &mut av, 2, 2,
-            Optimizer::Adagrad, 0.1, 0.0, 0.0, 0.0, 0.0, 2, 1, 1, &orders,
+            Loss::Logistic, Optimizer::Adagrad, 0.1, 0.0, 0.0, 0.0, 0.0, 2, 1, 1, &orders,
         );
         assert!(loss(w0, &w, &v) < 0.5 * before);
     }

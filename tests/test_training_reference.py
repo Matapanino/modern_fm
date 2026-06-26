@@ -4,14 +4,19 @@ import numpy as np
 import pytest
 from modern_fm._reference import ffm_predict, fm_predict_fast
 from modern_fm._reference_train import (
+    ffm_fit_multiclass_reference,
+    ffm_fit_reference,
     ffm_train,
     fm_fit_multiclass_reference,
     fm_fit_reference,
     fm_train,
+    init_ffm_multiclass_params,
+    init_ffm_params,
     init_fm_multiclass_params,
     init_fm_params,
     make_row_orders,
     new_adam_state,
+    new_ftrl_state,
 )
 from modern_fm.losses import logistic_loss, squared_loss
 
@@ -57,6 +62,20 @@ def test_ffm_logistic_loss_decreases(optimizer):
         n_factors=2, random_state=0,
     )
     assert logistic_loss(y, ffm_predict(X, field_ids, w0, w, V)) < 0.7 * LOG2
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+def test_ffm_squared_loss_decreases(optimizer):
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(60, 6))
+    y = X @ rng.normal(size=6)
+    field_ids = np.array([0, 0, 1, 1, 2, 2])
+    w0, w, V = ffm_train(
+        X, y, field_ids, loss="squared", optimizer=optimizer, learning_rate=0.05,
+        epochs=25, n_factors=2, random_state=0,
+    )
+    baseline = squared_loss(y, np.full_like(y, y.mean()))
+    assert squared_loss(y, ffm_predict(X, field_ids, w0, w, V)) < 0.5 * baseline
 
 
 def test_fm_same_seed_identical_params():
@@ -144,10 +163,45 @@ def test_adam_state_roundtrip_matches_single_call():
     np.testing.assert_allclose(one[2], V)
 
 
-@pytest.mark.parametrize("optimizer", ["adagrad", "adam"])
+def test_ftrl_state_roundtrip_matches_single_call():
+    """Per-epoch FTRL training with `ftrl_state` round-trip equals one multi-epoch
+    call — the early-stopping (z, n) hand-off is exact for FM and FFM binary."""
+    rng = np.random.default_rng(0)
+    n, d, k, epochs = 30, 8, 3, 6
+    X = rng.normal(size=(n, d))
+    y = (X @ rng.normal(size=d) > 0).astype(np.float64)
+    ro = make_row_orders(rng, n, epochs=epochs)
+    kw = dict(optimizer="ftrl", learning_rate=0.1, l1_linear=1e-3, l1_factors=1e-3, ftrl_beta=0.5)
+    # FM
+    params = init_fm_params(rng, d, k, 0.05)
+    one = fm_fit_reference(X, y, params, row_orders=ro, **kw)
+    w0, w, V = params
+    st = new_ftrl_state(params[0], params[1], params[2])
+    for e in range(epochs):
+        w0, w, V = fm_fit_reference(X, y, (w0, w, V), row_orders=ro[e : e + 1], ftrl_state=st, **kw)
+    assert np.isclose(one[0], w0)
+    np.testing.assert_allclose(one[1], w)
+    np.testing.assert_allclose(one[2], V)
+    # FFM
+    fid = np.arange(d) % 3
+    n_fields = int(fid.max()) + 1
+    fp = init_ffm_params(rng, d, n_fields, k, 0.05)
+    fone = ffm_fit_reference(X, y, fid, fp, row_orders=ro, **kw)
+    w0, w, V = fp
+    fst = new_ftrl_state(fp[0], fp[1], fp[2])
+    for e in range(epochs):
+        w0, w, V = ffm_fit_reference(
+            X, y, fid, (w0, w, V), row_orders=ro[e : e + 1], ftrl_state=fst, **kw
+        )
+    assert np.isclose(fone[0], w0)
+    np.testing.assert_allclose(fone[1], w)
+    np.testing.assert_allclose(fone[2], V)
+
+
+@pytest.mark.parametrize("optimizer", ["adagrad", "adam", "ftrl"])
 def test_multiclass_state_roundtrip_matches_single_call(optimizer):
-    """Per-epoch multiclass training with state/adam_state round-trip equals one
-    multi-epoch call — the early-stopping hand-off preserves per-class state."""
+    """Per-epoch multiclass training with state/adam_state/ftrl_state round-trip
+    equals one multi-epoch call — the hand-off preserves per-class state."""
     rng = np.random.default_rng(0)
     n, d, k, n_classes, epochs = 30, 8, 3, 4, 5
     X = rng.normal(size=(n, d))
@@ -159,12 +213,45 @@ def test_multiclass_state_roundtrip_matches_single_call(optimizer):
     one = fm_fit_multiclass_reference(X, y, params, row_orders=ro, **kw)
     if optimizer == "adam":
         carry = dict(adam_state=new_adam_state(params[0], params[1], params[2]))
+    elif optimizer == "ftrl":
+        carry = dict(ftrl_state=new_ftrl_state(params[0], params[1], params[2]))
     else:
         carry = dict(state=[np.zeros_like(p) for p in params])
     w0, w, V = params
     for e in range(epochs):
         w0, w, V = fm_fit_multiclass_reference(
             X, y, (w0, w, V), row_orders=ro[e : e + 1], **kw, **carry
+        )
+    np.testing.assert_allclose(one[0], w0)
+    np.testing.assert_allclose(one[1], w)
+    np.testing.assert_allclose(one[2], V)
+
+
+@pytest.mark.parametrize("optimizer", ["adagrad", "adam", "ftrl"])
+def test_ffm_multiclass_state_roundtrip_matches_single_call(optimizer):
+    """Per-epoch multiclass FFM training with state/adam_state/ftrl_state round-trip
+    equals one multi-epoch call (the FFM-multiclass early-stopping hand-off)."""
+    rng = np.random.default_rng(0)
+    n, d, k, n_classes, epochs = 30, 6, 3, 4, 5
+    X = rng.normal(size=(n, d))
+    y = rng.integers(0, n_classes, size=n)
+    fid = np.arange(d) % 3
+    n_fields = int(fid.max()) + 1
+    params = init_ffm_multiclass_params(rng, n_classes, d, n_fields, k, 0.05)
+    ro = make_row_orders(rng, n, epochs=epochs)
+    kw = dict(optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+              label_smoothing=0.1)
+    one = ffm_fit_multiclass_reference(X, y, fid, params, row_orders=ro, **kw)
+    if optimizer == "adam":
+        carry = dict(adam_state=new_adam_state(params[0], params[1], params[2]))
+    elif optimizer == "ftrl":
+        carry = dict(ftrl_state=new_ftrl_state(params[0], params[1], params[2]))
+    else:
+        carry = dict(state=[np.zeros_like(p) for p in params])
+    w0, w, V = params
+    for e in range(epochs):
+        w0, w, V = ffm_fit_multiclass_reference(
+            X, y, fid, (w0, w, V), row_orders=ro[e : e + 1], **kw, **carry
         )
     np.testing.assert_allclose(one[0], w0)
     np.testing.assert_allclose(one[1], w)

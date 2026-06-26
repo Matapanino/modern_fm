@@ -16,13 +16,23 @@ The Python API must feel like scikit-learn:
 Primary backend: Rust CPU via PyO3/maturin, efficient on sparse CSR.
 The pure-NumPy **reference implementations** in `python/modern_fm/_reference.py`
 are the ground truth for all backends — never change them for speed.
-Current state: v0.1 (Phases 0–4) is implemented and tested. Rust kernels in
-`rust/` cover FM/FFM prediction and training — FM binary (logistic/squared) and
-multiclass softmax, plus FFM logistic, all SGD/AdaGrad/Adam — dispatched through
-the private `modern_fm._backend` module (NumPy reference fallback when the
-extension is not built). Adam is per-parameter lazy Adam (`beta_1`/`beta_2`/
-`epsilon`); it does not yet combine with early stopping. Remaining v0.2 work:
-mini-batch, `rayon` parallelism, FTRL.
+Current state: v0.3.0 released; the v0.4 milestone (API completeness & online
+learning) has landed on `main` (not yet tagged). Rust kernels in `rust/` cover
+FM/FFM prediction and training — FM binary (logistic/squared) + multiclass softmax
+and FFM binary (logistic/squared) + multiclass softmax, optimizers
+SGD/AdaGrad/Adam/FTRL, mini-batch (`batch_size`) and `rayon` row-parallelism
+(`n_jobs`) — dispatched through the private `modern_fm._backend` module (NumPy
+reference fallback when the extension is not built). Early stopping now works for
+every optimizer (incl. FTRL) across binary and multiclass FM/FFM; the
+Adam/FTRL/multiclass optimizer-state hand-offs round-trip through the NumPy
+reference path. `partial_fit` (sklearn first-call `classes`) and `warm_start` add
+incremental/streaming training for all four estimators, with an exact
+optimizer-state round-trip (`python/modern_fm/_partial.py`). Estimators:
+`FMRegressor`, `FMClassifier`, `FFMClassifier`, `FFMRegressor`; scikit-learn is a
+runtime dependency and `check_estimator`-clean. The path to a stable release — the
+remaining v1.0 work (FwFM, calibration, top-interactions, docs site, real-data
+benchmark, API freeze) and the `## v1.0 — criteria` gate — is fixed in
+`docs/roadmap.md`; consult it before starting new work.
 
 ## Target models
 
