@@ -3,7 +3,7 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-06-26
 
 ### Added
 - Full scikit-learn `check_estimator` compatibility: `FMClassifier`,

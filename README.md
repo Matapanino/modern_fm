@@ -8,7 +8,7 @@
 Fast, sklearn-compatible Factorization Machines (FM) and Field-aware
 Factorization Machines (FFM) for Python.
 
-**Status: v0.2 (Beta).** A Rust CPU backend (parity-tested against pure-NumPy
+**Status: v0.3 (Beta).** A Rust CPU backend (parity-tested against pure-NumPy
 reference implementations) drives sklearn-style estimators — `FMClassifier`
 (binary + multiclass softmax), `FMRegressor`, and `FFMClassifier`
 (binary + multiclass softmax) — with the SGD / AdaGrad / Adam /
@@ -16,8 +16,11 @@ reference implementations) drives sklearn-style estimators — `FMClassifier`
 gradient averaging (`batch_size`), **multi-core training** via `rayon`
 (`n_jobs`), plus `sample_weight`/`class_weight`, `label_smoothing`, early
 stopping, a `CategoricalEncoder`, and `save_model`/`load_model`. FTRL's L1
-(`l1_linear`/`l1_factors`) yields exact-zero weights. See `docs/roadmap.md` for
-remaining niche gaps (FTRL + early stopping, multiclass + early-stopping for FFM).
+(`l1_linear`/`l1_factors`) yields exact-zero weights. The estimators are
+scikit-learn `check_estimator`-compatible (drop into `Pipeline` / `GridSearchCV`),
+accept pandas / polars DataFrames, and `load_libffm` / `dump_libffm` read and write
+the libffm text format. See `docs/roadmap.md` for remaining niche gaps (FTRL +
+early stopping, multiclass + early-stopping for FFM).
 
 ## Installation
 
