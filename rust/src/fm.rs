@@ -3,8 +3,10 @@
 //! y_hat = w0 + sum_i w_i x_i
 //!       + 0.5 * sum_f [(sum_i v_{i,f} x_i)^2 - sum_i v_{i,f}^2 x_i^2]
 
+use rayon::prelude::*;
+
 use crate::data::{dense_row_nonzeros, CsrView};
-use crate::optimizer::{adam_step, apply_update, loss_grad, Loss, Optimizer};
+use crate::optimizer::{loss_grad, step_coord, step_param, AdamState, FtrlState, Loss, Optimizer};
 
 /// Score one row given its nonzero (index, value) pairs.
 /// `v` is row-major (n_features, k).
@@ -96,106 +98,159 @@ fn train_score_row(
     s + 0.5 * (dot - sq)
 }
 
-/// Apply one row's FM gradient to (w0, w, V) with lazy L2 and update order
-/// w0 -> w -> V. `g` is the loss derivative dL/ds (already weighted); `cache`
-/// is the factor-sum vector from `train_score_row`. Shared by binary and
-/// multiclass training.
-#[allow(clippy::too_many_arguments)]
-fn update_row(
-    indices: &[i64],
-    values: &[f64],
-    g: f64,
-    cache: &[f64],
-    w0: &mut f64,
-    w: &mut [f64],
-    v: &mut [f64],
-    acc_w0: &mut f64,
-    acc_w: &mut [f64],
-    acc_v: &mut [f64],
-    k: usize,
-    opt: Optimizer,
-    lr: f64,
-    l2_linear: f64,
-    l2_factors: f64,
-) {
-    apply_update(w0, g, acc_w0, lr, opt);
-    for (&i, &x) in indices.iter().zip(values) {
-        let i = i as usize;
-        let grad = g * x + l2_linear * w[i];
-        apply_update(&mut w[i], grad, &mut acc_w[i], lr, opt);
-    }
-    for (&i, &x) in indices.iter().zip(values) {
-        let i = i as usize;
-        for (f, &cache_f) in cache.iter().enumerate() {
-            let vi = i * k + f;
-            let grad = g * (x * cache_f - v[vi] * x * x) + l2_factors * v[vi];
-            apply_update(&mut v[vi], grad, &mut acc_v[vi], lr, opt);
-        }
-    }
-}
-
-/// Adam moment vectors (m, v, t) for one parameter group, or empty triples for
-/// the SGD/AdaGrad paths (which never index them).
-fn adam_vecs(adam: bool, len: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    if adam {
-        (vec![0.0; len], vec![0.0; len], vec![0.0; len])
-    } else {
-        (Vec::new(), Vec::new(), Vec::new())
-    }
-}
-
-/// Adam counterpart of `update_row`: identical w0 -> w -> V order and lazy L2,
-/// but every parameter steps through `adam_step` with its own (m, v, t) cell.
-/// The slices are sized like (w, V) for the current FM (one class in the
-/// multiclass kernel); w0 uses scalar cells. Shared by binary and multiclass.
-#[allow(clippy::too_many_arguments)]
-fn update_row_adam(
-    indices: &[i64],
-    values: &[f64],
-    g: f64,
-    cache: &[f64],
-    w0: &mut f64,
-    w: &mut [f64],
-    v: &mut [f64],
-    m_w0: &mut f64,
-    v_w0: &mut f64,
-    t_w0: &mut f64,
-    m_w: &mut [f64],
-    v_w: &mut [f64],
-    t_w: &mut [f64],
-    m_v: &mut [f64],
-    v_v: &mut [f64],
-    t_v: &mut [f64],
-    k: usize,
-    lr: f64,
-    l2_linear: f64,
-    l2_factors: f64,
-    beta1: f64,
-    beta2: f64,
-    eps: f64,
-) {
-    adam_step(w0, g, m_w0, v_w0, t_w0, lr, beta1, beta2, eps);
-    for (&i, &x) in indices.iter().zip(values) {
-        let i = i as usize;
-        let grad = g * x + l2_linear * w[i];
-        adam_step(&mut w[i], grad, &mut m_w[i], &mut v_w[i], &mut t_w[i], lr, beta1, beta2, eps);
-    }
-    for (&i, &x) in indices.iter().zip(values) {
-        let i = i as usize;
-        for (f, &cache_f) in cache.iter().enumerate() {
-            let vi = i * k + f;
-            let grad = g * (x * cache_f - v[vi] * x * x) + l2_factors * v[vi];
-            adam_step(&mut v[vi], grad, &mut m_v[vi], &mut v_v[vi], &mut t_v[vi], lr, beta1, beta2, eps);
-        }
-    }
-}
-
-/// Train an FM in place with batch_size=1 (docs/optimization_spec.md).
+/// Per-FM mini-batch gradient scratch (docs/optimization_spec.md, "Mini-batch").
 ///
-/// Mirrors `_reference_train.fm_fit_reference`: per-row gradients from
-/// pre-update parameters, lazy L2, update order w0 -> w -> V. Rows are
-/// visited in the order given by `row_orders` (epochs * n_rows entries,
-/// validated by the caller). For logistic loss, y must be 0/1.
+/// Accumulates one batch's data-gradients from the frozen batch-start
+/// parameters — `g_w0` (bias), `gw[i]` (linear), `gv[i*k+f]` (factors) — over
+/// the touched features, then `flush` applies one update per touched coordinate
+/// with the batch-mean gradient plus lazy L2. Sized for one FM (one class in
+/// the multiclass kernel); backing arrays stay zero between batches because
+/// `flush` clears exactly the touched entries.
+struct FmGradAccum {
+    g_w0: f64,
+    gw: Vec<f64>,        // n_features
+    gv: Vec<f64>,        // n_features * k
+    touched: Vec<usize>, // features touched this batch
+    seen: Vec<bool>,     // membership flag for `touched`, n_features
+}
+
+impl FmGradAccum {
+    fn new(n_features: usize, k: usize) -> Self {
+        Self {
+            g_w0: 0.0,
+            gw: vec![0.0; n_features],
+            gv: vec![0.0; n_features * k],
+            touched: Vec::new(),
+            seen: vec![false; n_features],
+        }
+    }
+
+    /// Add one row's data-gradient (`g` = dL/ds, already weighted), reading the
+    /// frozen factors `v` and the row's factor-sum `cache` from `train_score_row`.
+    fn add_row(&mut self, indices: &[i64], values: &[f64], g: f64, cache: &[f64], v: &[f64], k: usize) {
+        self.g_w0 += g;
+        for (&i, &x) in indices.iter().zip(values) {
+            let i = i as usize;
+            if !self.seen[i] {
+                self.seen[i] = true;
+                self.touched.push(i);
+            }
+            self.gw[i] += g * x;
+            let base = i * k;
+            for f in 0..k {
+                self.gv[base + f] += g * (x * cache[f] - v[base + f] * x * x);
+            }
+        }
+    }
+
+    /// Fold another partial accumulator's touched contributions into self,
+    /// clearing `other` back to zero for reuse. Reduces per-thread partials in
+    /// a fixed (thread-index) order so n_jobs>1 stays reproducible.
+    fn merge_from(&mut self, other: &mut FmGradAccum, k: usize) {
+        self.g_w0 += other.g_w0;
+        other.g_w0 = 0.0;
+        for &i in &other.touched {
+            if !self.seen[i] {
+                self.seen[i] = true;
+                self.touched.push(i);
+            }
+            self.gw[i] += other.gw[i];
+            other.gw[i] = 0.0;
+            let base = i * k;
+            for f in 0..k {
+                self.gv[base + f] += other.gv[base + f];
+                other.gv[base + f] = 0.0;
+            }
+            other.seen[i] = false;
+        }
+        other.touched.clear();
+    }
+
+    /// Apply one update per touched coordinate (bias always), then clear the
+    /// touched entries back to zero so the buffers are reusable next batch.
+    #[allow(clippy::too_many_arguments)]
+    fn flush(
+        &mut self,
+        bsz: f64,
+        w0: &mut f64,
+        w: &mut [f64],
+        v: &mut [f64],
+        acc_w0: &mut f64,
+        acc_w: &mut [f64],
+        acc_v: &mut [f64],
+        adam: &mut AdamState,
+        ftrl: &mut FtrlState,
+        k: usize,
+        opt: Optimizer,
+        lr: f64,
+        l1_linear: f64,
+        l2_linear: f64,
+        l1_factors: f64,
+        l2_factors: f64,
+    ) {
+        step_param(
+            w0, self.g_w0 / bsz, 0.0, 0.0, acc_w0,
+            &mut adam.m_w0, &mut adam.s_w0, &mut adam.t_w0, &mut ftrl.z_w0, &mut ftrl.n_w0, lr, opt,
+        );
+        self.g_w0 = 0.0;
+        for &i in &self.touched {
+            step_coord(
+                &mut w[i], self.gw[i] / bsz, l1_linear, l2_linear, &mut acc_w[i],
+                &mut adam.m_w, &mut adam.s_w, &mut adam.t_w, &mut ftrl.z_w, &mut ftrl.n_w, i, lr, opt,
+            );
+            self.gw[i] = 0.0;
+            let base = i * k;
+            for f in 0..k {
+                let vi = base + f;
+                step_coord(
+                    &mut v[vi], self.gv[vi] / bsz, l1_factors, l2_factors, &mut acc_v[vi],
+                    &mut adam.m_v, &mut adam.s_v, &mut adam.t_v, &mut ftrl.z_v, &mut ftrl.n_v, vi, lr, opt,
+                );
+                self.gv[vi] = 0.0;
+            }
+            self.seen[i] = false;
+        }
+        self.touched.clear();
+    }
+}
+
+/// Accumulate a contiguous run of rows into `acc` from the frozen parameters.
+/// One unit of work for the (optionally parallel) batch fill; reads only shared
+/// state besides `acc`, so chunks run on independent threads.
+#[allow(clippy::too_many_arguments)]
+fn accumulate_chunk(
+    acc: &mut FmGradAccum,
+    chunk: &[i64],
+    csr: &CsrView,
+    y: &[f64],
+    sample_weight: &[f64],
+    w0: f64,
+    w: &[f64],
+    v: &[f64],
+    k: usize,
+    loss: Loss,
+) {
+    let mut cache = vec![0.0; k];
+    for &r in chunk {
+        let (indices, values) = csr.row(r as usize);
+        let s = train_score_row(indices, values, w0, w, v, k, &mut cache);
+        let g = sample_weight[r as usize] * loss_grad(loss, s, y[r as usize]);
+        acc.add_row(indices, values, g, &cache, v, k);
+    }
+}
+
+/// Train an FM in place (docs/optimization_spec.md).
+///
+/// Mirrors `_reference_train.fm_fit_reference`: each epoch's `n_rows` entries in
+/// `row_orders` are consumed in `batch_size` chunks; per-row gradients come from
+/// the frozen batch-start parameters, are averaged over the batch, and applied
+/// once per touched coordinate (lazy L2, update order w0 -> w -> V). batch_size=1
+/// is the per-row path. For logistic loss, y must be 0/1.
+///
+/// `n_jobs` (>= 1) splits each batch into that many contiguous chunks accumulated
+/// in parallel, then reduced in chunk order; n_jobs=1 is the serial path and is
+/// bit-identical to the reference. n_jobs>1 differs only in float summation order
+/// (reproducible for a fixed n_jobs).
 #[allow(clippy::too_many_arguments)]
 pub fn fit_csr(
     csr: &CsrView,
@@ -211,45 +266,57 @@ pub fn fit_csr(
     loss: Loss,
     opt: Optimizer,
     lr: f64,
+    l1_linear: f64,
     l2_linear: f64,
+    l1_factors: f64,
     l2_factors: f64,
+    n_rows: usize,
+    batch_size: usize,
+    n_jobs: usize,
     row_orders: &[i64],
 ) {
-    let mut cache = vec![0.0; k];
-    // Adam moment state is internal and never round-tripped (optimization_spec.md).
-    let adam = matches!(opt, Optimizer::Adam { .. });
-    let (mut m_w0, mut v_w0, mut t_w0) = (0.0, 0.0, 0.0);
-    let (mut m_w, mut vacc_w, mut t_w) = adam_vecs(adam, w.len());
-    let (mut m_v, mut vacc_v, mut t_v) = adam_vecs(adam, v.len());
-    for &r in row_orders {
-        let (indices, values) = csr.row(r as usize);
-        let s = train_score_row(indices, values, *w0, w, v, k, &mut cache);
-        let g = sample_weight[r as usize] * loss_grad(loss, s, y[r as usize]);
-        if let Optimizer::Adam { beta1, beta2, eps } = opt {
-            update_row_adam(
-                indices, values, g, &cache, w0, w, v, &mut m_w0, &mut v_w0, &mut t_w0,
-                &mut m_w, &mut vacc_w, &mut t_w, &mut m_v, &mut vacc_v, &mut t_v, k, lr,
-                l2_linear, l2_factors, beta1, beta2, eps,
-            );
-        } else {
-            update_row(
-                indices, values, g, &cache, w0, w, v, acc_w0, acc_w, acc_v, k, opt, lr,
-                l2_linear, l2_factors,
+    let n = w.len();
+    let n_threads = n_jobs.max(1);
+    // One reusable partial accumulator per thread; thread 0 doubles as the
+    // reduced batch accumulator. Adam/FTRL state is internal (never round-tripped).
+    let mut accs: Vec<FmGradAccum> = (0..n_threads).map(|_| FmGradAccum::new(n, k)).collect();
+    let mut adam = AdamState::new(matches!(opt, Optimizer::Adam { .. }), n, n * k);
+    let mut ftrl = FtrlState::new(matches!(opt, Optimizer::Ftrl { .. }), n, n * k);
+    for epoch in row_orders.chunks(n_rows) {
+        for batch in epoch.chunks(batch_size) {
+            if n_threads == 1 {
+                accumulate_chunk(&mut accs[0], batch, csr, y, sample_weight, *w0, w, v, k, loss);
+            } else {
+                let chunk_len = batch.len().div_ceil(n_threads);
+                let (w_ro, v_ro): (&[f64], &[f64]) = (w, v);
+                accs.par_iter_mut()
+                    .zip(batch.par_chunks(chunk_len))
+                    .for_each(|(acc, chunk)| {
+                        accumulate_chunk(acc, chunk, csr, y, sample_weight, *w0, w_ro, v_ro, k, loss);
+                    });
+                let (head, tail) = accs.split_at_mut(1);
+                for other in tail.iter_mut() {
+                    head[0].merge_from(other, k);
+                }
+            }
+            accs[0].flush(
+                batch.len() as f64, w0, w, v, acc_w0, acc_w, acc_v, &mut adam, &mut ftrl, k, opt,
+                lr, l1_linear, l2_linear, l1_factors, l2_factors,
             );
         }
     }
 }
 
-/// Train a multiclass (softmax) FM in place with batch_size=1.
+/// Train a multiclass (softmax) FM in place (docs/optimization_spec.md).
 ///
 /// Mirrors `_reference_train.fm_fit_multiclass_reference`: one FM per class,
 /// coupled only through the softmax gradient `sample_weight * (p_c - target_c)`
 /// (target uses label smoothing: `1 - eps` for the true class, `eps / (C - 1)`
-/// otherwise). Per-class logits and factor caches are computed from pre-update
-/// parameters, then every class is updated. `w0` is (C,), `w` is row-major
-/// (C, n_features), `v` is row-major (C, n_features, k); `y` holds class indices
-/// in [0, n_classes). AdaGrad accumulators are internal and span all epochs in
-/// `row_orders` (no early-stopping state hand-off in v0.1).
+/// otherwise). Per-class logits and factor caches come from the frozen
+/// batch-start parameters; each class accumulates and flushes independently over
+/// the shared touched-feature set. `w0` is (C,), `w` is row-major (C, n_features),
+/// `v` is row-major (C, n_features, k); `y` holds class indices in [0, n_classes).
+/// AdaGrad accumulators are internal and span all epochs in `row_orders`.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_multiclass_csr(
     csr: &CsrView,
@@ -263,9 +330,13 @@ pub fn fit_multiclass_csr(
     k: usize,
     opt: Optimizer,
     lr: f64,
+    l1_linear: f64,
     l2_linear: f64,
+    l1_factors: f64,
     l2_factors: f64,
     label_smoothing: f64,
+    n_rows: usize,
+    batch_size: usize,
     row_orders: &[i64],
 ) {
     let n = n_features;
@@ -273,9 +344,10 @@ pub fn fit_multiclass_csr(
     let mut acc_w = vec![0.0; n_classes * n];
     let mut acc_v = vec![0.0; n_classes * n * k];
     let adam = matches!(opt, Optimizer::Adam { .. });
-    let (mut m_w0, mut v_w0, mut t_w0) = adam_vecs(adam, n_classes);
-    let (mut m_w, mut vacc_w, mut t_w) = adam_vecs(adam, n_classes * n);
-    let (mut m_v, mut vacc_v, mut t_v) = adam_vecs(adam, n_classes * n * k);
+    let ftrl = matches!(opt, Optimizer::Ftrl { .. });
+    let mut accums: Vec<FmGradAccum> = (0..n_classes).map(|_| FmGradAccum::new(n, k)).collect();
+    let mut adams: Vec<AdamState> = (0..n_classes).map(|_| AdamState::new(adam, n, n * k)).collect();
+    let mut ftrls: Vec<FtrlState> = (0..n_classes).map(|_| FtrlState::new(ftrl, n, n * k)).collect();
     let off = if n_classes > 1 {
         label_smoothing / (n_classes as f64 - 1.0)
     } else {
@@ -284,44 +356,44 @@ pub fn fit_multiclass_csr(
     let mut probs = vec![0.0; n_classes]; // logits, then exp(.), then probabilities
     let mut caches = vec![0.0; n_classes * k];
     let mut cache = vec![0.0; k];
-    for &r in row_orders {
-        let (indices, values) = csr.row(r as usize);
-        let yc = y[r as usize] as usize;
-        let sw = sample_weight[r as usize];
-        // pass 1: per-class logit + factor cache from pre-update parameters
-        for c in 0..n_classes {
-            let w_c = &w[c * n..(c + 1) * n];
-            let v_c = &v[c * n * k..(c + 1) * n * k];
-            probs[c] = train_score_row(indices, values, w0[c], w_c, v_c, k, &mut cache);
-            caches[c * k..(c + 1) * k].copy_from_slice(&cache);
-        }
-        // stable softmax: subtract max, sum exp in class order
-        let maxl = probs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        let mut sum_ex = 0.0;
-        for p in probs.iter_mut() {
-            *p = (*p - maxl).exp();
-            sum_ex += *p;
-        }
-        // pass 2: per-class softmax-gradient update
-        for c in 0..n_classes {
-            let p = probs[c] / sum_ex;
-            let target = if c == yc { 1.0 - label_smoothing } else { off };
-            let g = sw * (p - target);
-            let cache_c = &caches[c * k..(c + 1) * k];
-            let (wr, vr) = (c * n..(c + 1) * n, c * n * k..(c + 1) * n * k);
-            if let Optimizer::Adam { beta1, beta2, eps } = opt {
-                update_row_adam(
-                    indices, values, g, cache_c, &mut w0[c], &mut w[wr.clone()], &mut v[vr.clone()],
-                    &mut m_w0[c], &mut v_w0[c], &mut t_w0[c],
-                    &mut m_w[wr.clone()], &mut vacc_w[wr.clone()], &mut t_w[wr],
-                    &mut m_v[vr.clone()], &mut vacc_v[vr.clone()], &mut t_v[vr],
-                    k, lr, l2_linear, l2_factors, beta1, beta2, eps,
-                );
-            } else {
-                update_row(
-                    indices, values, g, cache_c, &mut w0[c], &mut w[wr.clone()], &mut v[vr.clone()],
-                    &mut acc_w0[c], &mut acc_w[wr], &mut acc_v[vr], k, opt, lr, l2_linear,
-                    l2_factors,
+    for epoch in row_orders.chunks(n_rows) {
+        for batch in epoch.chunks(batch_size) {
+            for &r in batch {
+                let (indices, values) = csr.row(r as usize);
+                let yc = y[r as usize] as usize;
+                let sw = sample_weight[r as usize];
+                // pass 1: per-class logit + factor cache from frozen parameters
+                for c in 0..n_classes {
+                    let w_c = &w[c * n..(c + 1) * n];
+                    let v_c = &v[c * n * k..(c + 1) * n * k];
+                    probs[c] = train_score_row(indices, values, w0[c], w_c, v_c, k, &mut cache);
+                    caches[c * k..(c + 1) * k].copy_from_slice(&cache);
+                }
+                // stable softmax: subtract max, sum exp in class order
+                let maxl = probs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let mut sum_ex = 0.0;
+                for p in probs.iter_mut() {
+                    *p = (*p - maxl).exp();
+                    sum_ex += *p;
+                }
+                // accumulate the per-class softmax gradient into each class's scratch
+                for c in 0..n_classes {
+                    let p = probs[c] / sum_ex;
+                    let target = if c == yc { 1.0 - label_smoothing } else { off };
+                    let g = sw * (p - target);
+                    let cache_c = &caches[c * k..(c + 1) * k];
+                    let v_c = &v[c * n * k..(c + 1) * n * k];
+                    accums[c].add_row(indices, values, g, cache_c, v_c, k);
+                }
+            }
+            // flush each class over the shared touched-feature set
+            let bsz = batch.len() as f64;
+            for c in 0..n_classes {
+                let (wr, vr) = (c * n..(c + 1) * n, c * n * k..(c + 1) * n * k);
+                accums[c].flush(
+                    bsz, &mut w0[c], &mut w[wr.clone()], &mut v[vr.clone()],
+                    &mut acc_w0[c], &mut acc_w[wr], &mut acc_v[vr], &mut adams[c], &mut ftrls[c], k,
+                    opt, lr, l1_linear, l2_linear, l1_factors, l2_factors,
                 );
             }
         }
@@ -377,7 +449,7 @@ mod tests {
         let (mut a0, mut aw, mut av) = (0.0, vec![0.0], vec![0.0]);
         fit_csr(
             &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, &mut a0, &mut aw, &mut av, 1,
-            Loss::Logistic, Optimizer::Sgd, 1.0, 0.0, 0.0, &[0],
+            Loss::Logistic, Optimizer::Sgd, 1.0, 0.0, 0.0, 0.0, 0.0, 1, 1, 1, &[0],
         );
         assert!((w0 - 0.5).abs() < 1e-15);
         assert!((w[0] - 0.5).abs() < 1e-15);
@@ -398,7 +470,7 @@ mod tests {
         fit_csr(
             &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, &mut a0, &mut aw, &mut av, 1,
             Loss::Logistic, Optimizer::Adam { beta1: 0.9, beta2: 0.999, eps: 1e-8 }, 1.0,
-            0.0, 0.0, &[0],
+            0.0, 0.0, 0.0, 0.0, 1, 1, 1, &[0],
         );
         assert!((w0 - 1.0).abs() < 1e-6);
         assert!((w[0] - 1.0).abs() < 1e-6);
@@ -419,7 +491,7 @@ mod tests {
         let mut v = vec![0.0, 0.0]; // (C=2, n=1, k=1)
         fit_multiclass_csr(
             &csr, &[0], &[1.0], &mut w0, &mut w, &mut v, 2, 1, 1, Optimizer::Sgd, 1.0,
-            0.0, 0.0, 0.0, &[0],
+            0.0, 0.0, 0.0, 0.0, 0.0, 1, 1, &[0],
         );
         assert!((w0[0] - 0.5).abs() < 1e-15);
         assert!((w0[1] + 0.5).abs() < 1e-15);

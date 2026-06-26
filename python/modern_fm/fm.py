@@ -2,18 +2,24 @@
 
 Binary classification (logistic loss), multiclass classification (softmax loss),
 and regression (squared loss), trained through `_backend` (Rust when built, NumPy
-reference otherwise) with batch_size=1, single-threaded. Supports class_weight,
-sample_weight, label_smoothing, early stopping/eval_set, and save/load. Training
-always runs in float64; learned attributes are stored in the requested `dtype`.
+reference otherwise). Configurable `batch_size` (mini-batch gradient averaging;
+batch_size=1 is per-row SGD) and `n_jobs` rayon row-parallelism (binary/regression;
+multiclass is serial in v0.2). Supports class_weight, sample_weight,
+label_smoothing, early stopping/eval_set, and save/load. Training always runs in
+float64; learned attributes are stored in the requested `dtype`.
 
-Optimizers: SGD, AdaGrad, and Adam ("adam", with beta_1/beta_2/epsilon).
+Optimizers: SGD, AdaGrad, Adam ("adam", with beta_1/beta_2/epsilon), and
+FTRL-Proximal ("ftrl", with l1_linear/l1_factors/ftrl_beta; L1 yields exact zeros).
 
-Not implemented yet (raise NotImplementedError at fit time): mini-batches
-(batch_size != 1), and early stopping combined with multiclass or the Adam
+Early stopping supports every optimizer except FTRL and works with multiclass;
+those state hand-offs round-trip through the NumPy reference path. Not yet
+supported (raises NotImplementedError at fit time): early stopping with the FTRL
 optimizer. See docs/roadmap.md.
 """
 
 from __future__ import annotations
+
+import os
 
 import numpy as np
 import scipy.sparse as sp
@@ -26,8 +32,9 @@ from ._reference_train import (
     init_fm_multiclass_params,
     init_fm_params,
     make_row_orders,
+    new_adam_state,
 )
-from .losses import logistic_loss, sigmoid, softmax, squared_loss
+from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
 
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
 
@@ -113,11 +120,25 @@ def _smooth(y01, label_smoothing):
     return y01 * (1.0 - label_smoothing) + 0.5 * label_smoothing
 
 
-def _no_adam_early_stopping(optimizer, early_stopping, eval_set):
-    """Adam keeps its moment state internal and cannot drive epochs one at a
-    time, so it is incompatible with early stopping in v0.2 (see roadmap)."""
-    if optimizer == "adam" and (early_stopping or eval_set is not None):
-        raise NotImplementedError(f"early stopping with the Adam optimizer {_PHASE4}")
+def _resolve_n_jobs(n_jobs):
+    """Rust thread count: -1 -> all cores, otherwise a positive integer.
+
+    n_jobs=1 is the serial, bit-reproducible path; n_jobs>1 splits each batch
+    across threads (reproducible for a fixed thread count, see optimization_spec.md).
+    """
+    if n_jobs == -1:
+        return os.cpu_count() or 1
+    if not (isinstance(n_jobs, (int, np.integer)) and n_jobs >= 1):
+        raise ValueError(f"n_jobs must be -1 or a positive integer, got {n_jobs!r}")
+    return int(n_jobs)
+
+
+def _no_ftrl_early_stopping(optimizer, early_stopping, eval_set):
+    """FTRL keeps per-coordinate (z, n) state that is not round-tripped across
+    epochs, so it is incompatible with early stopping in v0.2. (Adam IS supported
+    via the reference-path moment round-trip in `_fit_es`; see docs/roadmap.md.)"""
+    if optimizer == "ftrl" and (early_stopping or eval_set is not None):
+        raise NotImplementedError(f"early stopping with the ftrl optimizer {_PHASE4}")
 
 
 class _FMBase(ModelIOMixin, ParamsMixin):
@@ -128,8 +149,11 @@ class _FMBase(ModelIOMixin, ParamsMixin):
             raise ValueError(f"unknown dtype {self.dtype!r}; expected 'float32' or 'float64'")
         if self.backend != "rust_cpu":
             raise ValueError(f"unknown backend {self.backend!r}; only 'rust_cpu' exists in v0.1")
-        if self.batch_size != 1:
-            raise NotImplementedError(f"mini-batch training (batch_size != 1) {_PHASE4}")
+        if not (isinstance(self.batch_size, (int, np.integer)) and self.batch_size >= 1):
+            raise ValueError(f"batch_size must be a positive integer, got {self.batch_size!r}")
+        _resolve_n_jobs(self.n_jobs)  # validate (raises on a bad n_jobs)
+        if (self.l1_linear or self.l1_factors) and self.optimizer != "ftrl":
+            raise ValueError("l1_linear/l1_factors are only used by optimizer='ftrl'")
 
     def _fit_core(self, X, y, loss, sample_weight=None):
         n_rows, n_features = X.shape
@@ -148,10 +172,15 @@ class _FMBase(ModelIOMixin, ParamsMixin):
             learning_rate=self.learning_rate,
             l2_linear=self.l2_linear,
             l2_factors=self.l2_factors,
+            l1_linear=self.l1_linear,
+            l1_factors=self.l1_factors,
             row_orders=row_orders,
             beta_1=self.beta_1,
             beta_2=self.beta_2,
             epsilon=self.epsilon,
+            ftrl_beta=self.ftrl_beta,
+            batch_size=self.batch_size,
+            n_jobs=_resolve_n_jobs(self.n_jobs),
             sample_weight=sample_weight,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
@@ -182,7 +211,14 @@ class _FMBase(ModelIOMixin, ParamsMixin):
         n_tr = X_tr.shape[0]
         init = init_fm_params(rng, n_features, self.n_factors, self.init_scale)
         row_orders = make_row_orders(rng, n_tr, self.max_iter)
-        state = [0.0, np.zeros(n_features), np.zeros((n_features, self.n_factors))]
+        # AdaGrad/SGD round-trip accumulators via `state`; Adam round-trips its
+        # moments via `adam_state` (which routes through the NumPy reference).
+        is_adam = self.optimizer == "adam"
+        state = (
+            None if is_adam
+            else [0.0, np.zeros(n_features), np.zeros((n_features, self.n_factors))]
+        )
+        adam_state = new_adam_state(init[0], init[1], init[2]) if is_adam else None
         work = [init[0], init[1], init[2]]
         metric = logistic_loss if loss == "logistic" else squared_loss
 
@@ -190,8 +226,10 @@ class _FMBase(ModelIOMixin, ParamsMixin):
             work[0], work[1], work[2] = _backend.fm_fit(
                 X_tr, y_tr, (work[0], work[1], work[2]), loss=loss, optimizer=self.optimizer,
                 learning_rate=self.learning_rate, l2_linear=self.l2_linear,
-                l2_factors=self.l2_factors, row_orders=row_orders[e : e + 1],
-                sample_weight=sw_tr, state=state,
+                l2_factors=self.l2_factors, l1_linear=self.l1_linear, l1_factors=self.l1_factors,
+                row_orders=row_orders[e : e + 1], ftrl_beta=self.ftrl_beta,
+                batch_size=self.batch_size, n_jobs=_resolve_n_jobs(self.n_jobs),
+                sample_weight=sw_tr, state=state, adam_state=adam_state,
             )
 
         def evaluate():
@@ -249,6 +287,9 @@ class FMClassifier(_FMBase):
         random_state=None,
         n_jobs=-1,
         verbose=0,
+        l1_linear=0.0,
+        l1_factors=0.0,
+        ftrl_beta=1.0,
     ):
         self.n_factors = n_factors
         self.loss = loss
@@ -273,10 +314,13 @@ class FMClassifier(_FMBase):
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.verbose = verbose
+        self.l1_linear = l1_linear
+        self.l1_factors = l1_factors
+        self.ftrl_beta = ftrl_beta
 
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
-        _no_adam_early_stopping(self.optimizer, self.early_stopping, eval_set)
+        _no_ftrl_early_stopping(self.optimizer, self.early_stopping, eval_set)
         if self.loss not in ("logistic", "softmax"):
             raise ValueError(f"unknown loss {self.loss!r} for FMClassifier")
         X = _check_X(X)
@@ -286,7 +330,14 @@ class FMClassifier(_FMBase):
             raise ValueError("y must contain at least 2 classes")
         if self.classes_.shape[0] > 2 or self.loss == "softmax":
             if self.early_stopping or eval_set is not None:
-                raise NotImplementedError(f"early stopping with multiclass {_PHASE4}")
+                eval_val = None
+                if eval_set is not None:
+                    Xv, yv = normalize_eval_set(eval_set)
+                    eval_val = (
+                        _check_X(Xv, X.shape[1]),
+                        np.searchsorted(self.classes_, np.asarray(yv)),
+                    )
+                return self._fit_multiclass_es(X, y, sample_weight, eval_val)
             return self._fit_multiclass(X, y, sample_weight)
         y01 = (y == self.classes_[1]).astype(np.float64)
         sw = _combine_weights(y01, self.classes_, sample_weight, self.class_weight, X.shape[0])
@@ -317,11 +368,15 @@ class FMClassifier(_FMBase):
             learning_rate=self.learning_rate,
             l2_linear=self.l2_linear,
             l2_factors=self.l2_factors,
+            l1_linear=self.l1_linear,
+            l1_factors=self.l1_factors,
             row_orders=row_orders,
             label_smoothing=self.label_smoothing,
             beta_1=self.beta_1,
             beta_2=self.beta_2,
             epsilon=self.epsilon,
+            ftrl_beta=self.ftrl_beta,
+            batch_size=self.batch_size,
             sample_weight=sw,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
@@ -330,6 +385,73 @@ class FMClassifier(_FMBase):
         self.V_ = V.astype(out_dtype)
         self.n_features_in_ = n_features
         self.n_iter_ = self.max_iter
+        return self
+
+    def _fit_multiclass_es(self, X, y, sample_weight, eval_val):
+        """Epoch-by-epoch multiclass fit with early stopping (softmax cross-entropy
+        metric). The Rust multiclass kernel keeps its state internal, so the
+        per-epoch optimizer-state hand-off runs on the NumPy reference path."""
+        n_rows, n_features = X.shape
+        n_classes = self.classes_.shape[0]
+        if not 0.0 <= self.label_smoothing < 1.0:
+            raise ValueError(f"label_smoothing must be in [0, 1), got {self.label_smoothing}")
+        y_idx = np.searchsorted(self.classes_, y)
+        sw = _combine_weights(y_idx, self.classes_, sample_weight, self.class_weight, n_rows)
+        rng = np.random.default_rng(self.random_state)
+        if eval_val is None:
+            tr_idx, val_idx = split_indices(n_rows, self.validation_fraction, rng)
+            X_tr, y_tr = X[tr_idx], y_idx[tr_idx]
+            sw_tr = None if sw is None else np.asarray(sw)[tr_idx]
+            X_val, y_val = X[val_idx], y_idx[val_idx]
+        else:
+            X_tr, y_tr, sw_tr = X, y_idx, sw
+            X_val, y_val = eval_val
+        n_tr = X_tr.shape[0]
+        init = init_fm_multiclass_params(
+            rng, n_classes, n_features, self.n_factors, self.init_scale
+        )
+        row_orders = make_row_orders(rng, n_tr, self.max_iter)
+        is_adam = self.optimizer == "adam"
+        state = None if is_adam else [
+            np.zeros(n_classes), np.zeros((n_classes, n_features)),
+            np.zeros((n_classes, n_features, self.n_factors)),
+        ]
+        adam_state = new_adam_state(init[0], init[1], init[2]) if is_adam else None
+        work = [init[0], init[1], init[2]]
+
+        def train_epoch(e):
+            work[0], work[1], work[2] = _backend.fm_fit_multiclass(
+                X_tr, y_tr, (work[0], work[1], work[2]), optimizer=self.optimizer,
+                learning_rate=self.learning_rate, l2_linear=self.l2_linear,
+                l2_factors=self.l2_factors, l1_linear=self.l1_linear, l1_factors=self.l1_factors,
+                row_orders=row_orders[e : e + 1], label_smoothing=self.label_smoothing,
+                beta_1=self.beta_1, beta_2=self.beta_2, epsilon=self.epsilon,
+                ftrl_beta=self.ftrl_beta, batch_size=self.batch_size, sample_weight=sw_tr,
+                state=state, adam_state=adam_state,
+            )
+
+        def evaluate():
+            logits = np.column_stack(
+                [
+                    _backend.fm_predict_fast(X_val, float(work[0][c]), work[1][c], work[2][c])
+                    for c in range(n_classes)
+                ]
+            )
+            return softmax_loss(y_val, logits)  # true-label cross-entropy
+
+        def snapshot():
+            return (work[0].copy(), work[1].copy(), work[2].copy())
+
+        best, n_iter = run_epochs(
+            self.max_iter, self.patience, self.min_delta, train_epoch, evaluate, snapshot
+        )
+        w0, w, V = best
+        out_dtype = np.float32 if self.dtype == "float32" else np.float64
+        self.w0_ = w0.astype(out_dtype)
+        self.w_ = w.astype(out_dtype)
+        self.V_ = V.astype(out_dtype)
+        self.n_features_in_ = n_features
+        self.n_iter_ = n_iter
         return self
 
     def decision_function(self, X):
@@ -383,6 +505,9 @@ class FMRegressor(_FMBase):
         random_state=None,
         n_jobs=-1,
         verbose=0,
+        l1_linear=0.0,
+        l1_factors=0.0,
+        ftrl_beta=1.0,
     ):
         self.n_factors = n_factors
         self.optimizer = optimizer
@@ -404,10 +529,13 @@ class FMRegressor(_FMBase):
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.verbose = verbose
+        self.l1_linear = l1_linear
+        self.l1_factors = l1_factors
+        self.ftrl_beta = ftrl_beta
 
     def fit(self, X, y, sample_weight=None, eval_set=None):
         self._validate_common()
-        _no_adam_early_stopping(self.optimizer, self.early_stopping, eval_set)
+        _no_ftrl_early_stopping(self.optimizer, self.early_stopping, eval_set)
         X = _check_X(X)
         sw = _check_sample_weight(sample_weight, X.shape[0])
         y = np.asarray(y, dtype=np.float64)

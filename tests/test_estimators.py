@@ -208,7 +208,44 @@ def test_adam_multiclass_learns():
 
 
 @pytest.mark.parametrize("cls", ALL)
-def test_adam_early_stopping_not_implemented(cls):
+def test_adam_early_stopping_works(cls):
+    # Adam + early stopping rounds Adam moments across epochs (reference path).
+    X, y = _separable_binary(n=120, d=8)
+    model = _make(cls, optimizer="adam", early_stopping=True, max_iter=50, patience=5)
+    _fit(model, X, y)
+    assert 1 <= model.n_iter_ <= 50
+    assert model.predict(X).shape == (X.shape[0],)
+
+
+@pytest.mark.parametrize("cls", ALL)
+def test_adam_early_stopping_reproducible(cls):
+    X, y = _separable_binary(n=120, d=8)
+    a = _fit(_make(cls, optimizer="adam", early_stopping=True, max_iter=40), X, y)
+    b = _fit(_make(cls, optimizer="adam", early_stopping=True, max_iter=40), X, y)
+    np.testing.assert_array_equal(a.V_, b.V_)
+    assert a.n_iter_ == b.n_iter_
+
+
+@pytest.mark.parametrize("cls", ALL)
+def test_ftrl_optimizer_fits_and_predicts(cls):
+    X, y = _separable_binary(n=120, d=8)
+    model = _fit(_make(cls, optimizer="ftrl", l1_linear=0.01), X, y)
+    pred = model.predict(X)
+    assert pred.shape == (X.shape[0],)
+    assert np.all(np.isfinite(pred.astype(float)))
+    if cls in CLASSIFIERS:
+        assert (pred == y).mean() > 0.8  # FTRL actually learns
+
+
+@pytest.mark.parametrize("cls", ALL)
+def test_l1_requires_ftrl(cls):
+    X, y = _separable_binary(n=40)
+    with pytest.raises(ValueError, match="l1_linear"):
+        _fit(_make(cls, optimizer="adagrad", l1_linear=0.1), X, y)
+
+
+@pytest.mark.parametrize("cls", ALL)
+def test_ftrl_early_stopping_not_implemented(cls):
     X, y = _separable_binary(n=40)
     with pytest.raises(NotImplementedError):
-        _fit(_make(cls, optimizer="adam", early_stopping=True), X, y)
+        _fit(_make(cls, optimizer="ftrl", early_stopping=True), X, y)

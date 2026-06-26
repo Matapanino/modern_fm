@@ -104,23 +104,29 @@ def _acc_arrays(state, w, V):
 
 def fm_fit(
     X, y, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
-    beta_1=0.9, beta_2=0.999, epsilon=1e-8, sample_weight=None, state=None,
+    l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8, ftrl_beta=1.0,
+    batch_size=1, n_jobs=1, sample_weight=None, state=None, adam_state=None,
 ):
-    """Train an FM with batch_size=1 (docs/optimization_spec.md).
+    """Train an FM (docs/optimization_spec.md).
 
     `params` = (w0, w, V) initial values (unchanged); returns new float64
     (w0, w, V). `sample_weight` scales each row's gradient (None -> all ones).
-    `beta_1`/`beta_2`/`epsilon` apply only when optimizer == "adam". `state`
-    carries AdaGrad accumulators in/out for epoch-by-epoch training (Adam does
-    not round-trip its moments; the estimator forbids Adam + early stopping).
-    Rust-accelerated when available, reference fallback otherwise.
+    `batch_size` averages each batch's gradient (batch_size=1 is per-row).
+    `n_jobs` (>= 1) splits each batch across that many rayon threads; n_jobs=1
+    is the serial path matching the reference. `beta_1`/`beta_2`/`epsilon` apply
+    only when optimizer == "adam". `state` carries AdaGrad accumulators in/out
+    for epoch-by-epoch training. `adam_state` does the same for Adam moments;
+    because the Rust kernel keeps Adam state internal, Adam + early stopping
+    (adam_state given) runs on the NumPy reference path. The reference fallback
+    is always serial (it is the n_jobs=1 ground truth).
     """
-    if _rust is None:
+    if _rust is None or adam_state is not None:
         return _reference_train.fm_fit_reference(
             X, y, params, loss=loss, optimizer=optimizer, learning_rate=learning_rate,
-            l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
-            beta_1=beta_1, beta_2=beta_2, epsilon=epsilon,
-            sample_weight=sample_weight, state=state,
+            l2_linear=l2_linear, l2_factors=l2_factors, l1_linear=l1_linear,
+            l1_factors=l1_factors, row_orders=row_orders, beta_1=beta_1, beta_2=beta_2,
+            epsilon=epsilon, ftrl_beta=ftrl_beta, batch_size=batch_size,
+            sample_weight=sample_weight, state=state, adam_state=adam_state,
         )
     (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
         X, y, params, row_orders
@@ -130,7 +136,7 @@ def fm_fit(
     w0, acc_w0 = _rust.fm_fit_csr(
         indptr, indices, data, n_features, y, sw, w0, acc_w0, w, V, acc_w, acc_v,
         loss, optimizer, learning_rate, l2_linear, l2_factors, beta_1, beta_2, epsilon,
-        row_orders,
+        row_orders, batch_size, n_jobs, l1_linear, l1_factors, ftrl_beta,
     )
     if state is not None:
         state[0], state[1], state[2] = acc_w0, acc_w, acc_v
@@ -139,21 +145,27 @@ def fm_fit(
 
 def fm_fit_multiclass(
     X, y, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
-    label_smoothing=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8, sample_weight=None,
+    label_smoothing=0.0, l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
+    ftrl_beta=1.0, batch_size=1, sample_weight=None, state=None, adam_state=None,
 ):
-    """Train a multiclass (softmax) FM with batch_size=1 (optimization_spec.md).
+    """Train a multiclass (softmax) FM (optimization_spec.md).
 
     `params` = (w0 (C,), w (C, n), V (C, n, k)) initial values (unchanged);
     `y` holds integer class indices in [0, C). Returns new float64 (w0, w, V).
-    `beta_1`/`beta_2`/`epsilon` apply only when optimizer == "adam".
-    Rust-accelerated when available, NumPy reference fallback otherwise.
+    `batch_size` averages each batch's gradient (batch_size=1 is per-row).
+    `beta_1`/`beta_2`/`epsilon` apply only when optimizer == "adam". The Rust
+    multiclass kernel keeps optimizer state internal, so early stopping (`state`
+    or `adam_state` given) round-trips it across epochs on the NumPy reference
+    path. Otherwise Rust-accelerated when available, reference fallback otherwise.
     """
-    if _rust is None:
+    if _rust is None or state is not None or adam_state is not None:
         return _reference_train.fm_fit_multiclass_reference(
             X, y, params, optimizer=optimizer, learning_rate=learning_rate,
-            l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
-            label_smoothing=label_smoothing, beta_1=beta_1, beta_2=beta_2, epsilon=epsilon,
-            sample_weight=sample_weight,
+            l2_linear=l2_linear, l2_factors=l2_factors, l1_linear=l1_linear,
+            l1_factors=l1_factors, row_orders=row_orders, label_smoothing=label_smoothing,
+            beta_1=beta_1, beta_2=beta_2, epsilon=epsilon, ftrl_beta=ftrl_beta,
+            batch_size=batch_size, sample_weight=sample_weight, state=state,
+            adam_state=adam_state,
         )
     w0, w, V = params
     w0 = np.array(w0, dtype=np.float64, order="C", copy=True)  # (C,), mutated in place
@@ -169,22 +181,28 @@ def fm_fit_multiclass(
     _rust.fm_fit_multiclass_csr(
         indptr, indices, data, n_features, y, sw, w0, w, V,
         optimizer, learning_rate, l2_linear, l2_factors, label_smoothing,
-        beta_1, beta_2, epsilon, row_orders,
+        beta_1, beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
     )
     return w0, w, V
 
 
 def ffm_fit(
     X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
-    beta_1=0.9, beta_2=0.999, epsilon=1e-8, sample_weight=None, state=None,
+    l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8, ftrl_beta=1.0,
+    batch_size=1, n_jobs=1, sample_weight=None, state=None, adam_state=None,
 ):
-    """Train an FFM (logistic loss) with batch_size=1; see fm_fit."""
-    if _rust is None:
+    """Train an FFM (logistic loss); see fm_fit. `batch_size` averages each
+    batch's gradient (batch_size=1 is per-row); `n_jobs` (>= 1) splits each batch
+    across that many rayon threads (n_jobs=1 matches the serial reference).
+    Adam + early stopping (adam_state given) runs on the NumPy reference path,
+    like fm_fit."""
+    if _rust is None or adam_state is not None:
         return _reference_train.ffm_fit_reference(
             X, y, field_ids, params, optimizer=optimizer, learning_rate=learning_rate,
-            l2_linear=l2_linear, l2_factors=l2_factors, row_orders=row_orders,
-            beta_1=beta_1, beta_2=beta_2, epsilon=epsilon,
-            sample_weight=sample_weight, state=state,
+            l2_linear=l2_linear, l2_factors=l2_factors, l1_linear=l1_linear,
+            l1_factors=l1_factors, row_orders=row_orders, beta_1=beta_1, beta_2=beta_2,
+            epsilon=epsilon, ftrl_beta=ftrl_beta, batch_size=batch_size,
+            sample_weight=sample_weight, state=state, adam_state=adam_state,
         )
     field_ids = _prep_vec(field_ids, dtype=np.int64)
     (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
@@ -195,7 +213,47 @@ def ffm_fit(
     w0, acc_w0 = _rust.ffm_fit_csr(
         indptr, indices, data, n_features, y, sw, field_ids, w0, acc_w0, w, V, acc_w, acc_v,
         optimizer, learning_rate, l2_linear, l2_factors, beta_1, beta_2, epsilon, row_orders,
+        batch_size, n_jobs, l1_linear, l1_factors, ftrl_beta,
     )
     if state is not None:
         state[0], state[1], state[2] = acc_w0, acc_w, acc_v
+    return w0, w, V
+
+
+def ffm_fit_multiclass(
+    X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
+    label_smoothing=0.0, l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
+    ftrl_beta=1.0, batch_size=1, sample_weight=None,
+):
+    """Train a multiclass (softmax) FFM (one FFM per class, coupled by softmax).
+
+    `params` = (w0 (C,), w (C, n), V (C, n, n_fields, k)); `y` holds class indices
+    in [0, C). Serial (no n_jobs), like FM multiclass. Rust-accelerated when
+    available, NumPy reference fallback otherwise.
+    """
+    if _rust is None:
+        return _reference_train.ffm_fit_multiclass_reference(
+            X, y, field_ids, params, optimizer=optimizer, learning_rate=learning_rate,
+            l2_linear=l2_linear, l2_factors=l2_factors, l1_linear=l1_linear,
+            l1_factors=l1_factors, row_orders=row_orders, label_smoothing=label_smoothing,
+            beta_1=beta_1, beta_2=beta_2, epsilon=epsilon, ftrl_beta=ftrl_beta,
+            batch_size=batch_size, sample_weight=sample_weight,
+        )
+    w0, w, V = params
+    w0 = np.array(w0, dtype=np.float64, order="C", copy=True)  # (C,), mutated in place
+    w = np.array(w, dtype=np.float64, order="C", copy=True)  # (C, n)
+    V = np.array(V, dtype=np.float64, order="C", copy=True)  # (C, n, n_fields, k)
+    y = _prep_vec(y, dtype=np.int64)
+    field_ids = _prep_vec(field_ids, dtype=np.int64)
+    row_orders = np.ascontiguousarray(row_orders, dtype=np.int64)
+    if row_orders.ndim == 1:
+        row_orders = row_orders[None, :]
+    Xc = X if sp.issparse(X) else sp.csr_matrix(np.asarray(X, dtype=np.float64))
+    indptr, indices, data, n_features = _prep_csr(Xc)
+    sw = np.ones(len(y)) if sample_weight is None else _prep_vec(sample_weight)
+    _rust.ffm_fit_multiclass_csr(
+        indptr, indices, data, n_features, y, sw, field_ids, w0, w, V,
+        optimizer, learning_rate, l2_linear, l2_factors, label_smoothing,
+        beta_1, beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
+    )
     return w0, w, V

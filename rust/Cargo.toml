@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 # so that `cargo test` can still link against libpython.
 pyo3 = { version = "0.25", features = ["abi3-py310"] }
 numpy = "0.25"
+rayon = "1"
 
 [profile.release]
 lto = true

@@ -8,7 +8,8 @@
 
 use numpy::{
     IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
-    PyReadwriteArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods,
+    PyReadwriteArray1, PyReadwriteArray2, PyReadwriteArray3, PyReadwriteArray4,
+    PyUntypedArrayMethods,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -33,7 +34,13 @@ fn parse_loss(s: &str) -> PyResult<Loss> {
     }
 }
 
-fn parse_optimizer(s: &str, beta_1: f64, beta_2: f64, epsilon: f64) -> PyResult<Optimizer> {
+fn parse_optimizer(
+    s: &str,
+    beta_1: f64,
+    beta_2: f64,
+    epsilon: f64,
+    ftrl_beta: f64,
+) -> PyResult<Optimizer> {
     match s {
         "sgd" => Ok(Optimizer::Sgd),
         "adagrad" => Ok(Optimizer::Adagrad),
@@ -42,6 +49,7 @@ fn parse_optimizer(s: &str, beta_1: f64, beta_2: f64, epsilon: f64) -> PyResult<
             beta2: beta_2,
             eps: epsilon,
         }),
+        "ftrl" => Ok(Optimizer::Ftrl { beta: ftrl_beta }),
         _ => Err(val_err(format!("unknown optimizer {s:?}"))),
     }
 }
@@ -235,9 +243,17 @@ fn fm_fit_csr<'py>(
     beta_2: f64,
     epsilon: f64,
     row_orders: PyReadonlyArray2<'py, i64>,
+    batch_size: usize,
+    n_jobs: usize,
+    l1_linear: f64,
+    l1_factors: f64,
+    ftrl_beta: f64,
 ) -> PyResult<(f64, f64)> {
     let loss = parse_loss(loss)?;
-    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon)?;
+    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
+    if batch_size == 0 {
+        return Err(val_err("batch_size must be >= 1".to_string()));
+    }
     let k = v.shape()[1];
     let v_rows = v.shape()[0];
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
@@ -265,7 +281,8 @@ fn fm_fit_csr<'py>(
         let mut acc_w0 = acc_w0;
         fm::fit_csr(
             &csr, y_s, sw_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s, k, loss, opt,
-            learning_rate, l2_linear, l2_factors, ro,
+            learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, ro_shape[1], batch_size,
+            n_jobs.max(1), ro,
         );
         Ok((w0, acc_w0))
     });
@@ -298,8 +315,15 @@ fn fm_fit_multiclass_csr<'py>(
     beta_2: f64,
     epsilon: f64,
     row_orders: PyReadonlyArray2<'py, i64>,
+    batch_size: usize,
+    l1_linear: f64,
+    l1_factors: f64,
+    ftrl_beta: f64,
 ) -> PyResult<()> {
-    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon)?;
+    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
+    if batch_size == 0 {
+        return Err(val_err("batch_size must be >= 1".to_string()));
+    }
     let (n_classes, v_n, k) = (v.shape()[0], v.shape()[1], v.shape()[2]);
     let w_shape = [w.shape()[0], w.shape()[1]];
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
@@ -322,7 +346,8 @@ fn fm_fit_multiclass_csr<'py>(
         check_fit_args_mc(&csr, y_s, n_classes, sw_s, &ro_shape, ro)?;
         fm::fit_multiclass_csr(
             &csr, y_s, sw_s, w0_s, w_s, v_s, n_classes, n_features, k, opt, learning_rate,
-            l2_linear, l2_factors, label_smoothing, ro,
+            l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing, ro_shape[1], batch_size,
+            ro,
         );
         Ok(())
     });
@@ -356,8 +381,16 @@ fn ffm_fit_csr<'py>(
     beta_2: f64,
     epsilon: f64,
     row_orders: PyReadonlyArray2<'py, i64>,
+    batch_size: usize,
+    n_jobs: usize,
+    l1_linear: f64,
+    l1_factors: f64,
+    ftrl_beta: f64,
 ) -> PyResult<(f64, f64)> {
-    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon)?;
+    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
+    if batch_size == 0 {
+        return Err(val_err("batch_size must be >= 1".to_string()));
+    }
     let (v_rows, n_fields, k) = (v.shape()[0], v.shape()[1], v.shape()[2]);
     let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
     let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
@@ -386,9 +419,77 @@ fn ffm_fit_csr<'py>(
         let mut acc_w0 = acc_w0;
         ffm::fit_csr(
             &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s,
-            n_fields, k, opt, learning_rate, l2_linear, l2_factors, ro,
+            n_fields, k, opt, learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
+            ro_shape[1], batch_size, n_jobs.max(1), ro,
         );
         Ok((w0, acc_w0))
+    });
+    out.map_err(val_err)
+}
+
+/// Train a multiclass (softmax) FFM in place; w0 (C,), w (C, n_features) and
+/// v (C, n_features, n_fields, k) are all mutated. `y` holds class indices in
+/// [0, C). Serial (no n_jobs); see ffm::fit_multiclass_csr.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn ffm_fit_multiclass_csr<'py>(
+    py: Python<'py>,
+    indptr: PyReadonlyArray1<'py, i64>,
+    indices: PyReadonlyArray1<'py, i64>,
+    data: PyReadonlyArray1<'py, f64>,
+    n_features: usize,
+    y: PyReadonlyArray1<'py, i64>,
+    sample_weight: PyReadonlyArray1<'py, f64>,
+    field_ids: PyReadonlyArray1<'py, i64>,
+    mut w0: PyReadwriteArray1<'py, f64>,
+    mut w: PyReadwriteArray2<'py, f64>,
+    mut v: PyReadwriteArray4<'py, f64>,
+    optimizer: &str,
+    learning_rate: f64,
+    l2_linear: f64,
+    l2_factors: f64,
+    label_smoothing: f64,
+    beta_1: f64,
+    beta_2: f64,
+    epsilon: f64,
+    row_orders: PyReadonlyArray2<'py, i64>,
+    batch_size: usize,
+    l1_linear: f64,
+    l1_factors: f64,
+    ftrl_beta: f64,
+) -> PyResult<()> {
+    let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
+    if batch_size == 0 {
+        return Err(val_err("batch_size must be >= 1".to_string()));
+    }
+    let (n_classes, v_n, n_fields, k) = (v.shape()[0], v.shape()[1], v.shape()[2], v.shape()[3]);
+    let w_shape = [w.shape()[0], w.shape()[1]];
+    let ro_shape = [row_orders.shape()[0], row_orders.shape()[1]];
+    let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
+    let y_s = y.as_slice()?;
+    let sw_s = sample_weight.as_slice()?;
+    let ro = row_orders.as_slice()?;
+    let field_ids_s = field_ids.as_slice()?;
+    let w0_s = w0.as_slice_mut()?;
+    let w_s = w.as_slice_mut()?;
+    let v_s = v.as_slice_mut()?;
+    if w0_s.len() != n_classes || w_shape != [n_classes, n_features] || v_n != n_features {
+        return Err(val_err(format!(
+            "shape mismatch: n_classes={n_classes}, n_features={n_features}, \
+             w0={}, w={w_shape:?}, V dims=[{n_classes}, {v_n}, {n_fields}, {k}]",
+            w0_s.len()
+        )));
+    }
+    data::check_field_ids(field_ids_s, n_features, n_fields).map_err(val_err)?;
+    let out = py.allow_threads(|| -> Result<(), String> {
+        let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
+        check_fit_args_mc(&csr, y_s, n_classes, sw_s, &ro_shape, ro)?;
+        ffm::fit_multiclass_csr(
+            &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, n_classes, n_features, n_fields, k, opt,
+            learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing,
+            ro_shape[1], batch_size, ro,
+        );
+        Ok(())
     });
     out.map_err(val_err)
 }
@@ -402,5 +503,6 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fm_fit_csr, m)?)?;
     m.add_function(wrap_pyfunction!(fm_fit_multiclass_csr, m)?)?;
     m.add_function(wrap_pyfunction!(ffm_fit_csr, m)?)?;
+    m.add_function(wrap_pyfunction!(ffm_fit_multiclass_csr, m)?)?;
     Ok(())
 }
