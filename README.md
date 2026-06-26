@@ -17,11 +17,11 @@ remaining niche gaps (FTRL + early stopping, multiclass + early-stopping for FFM
 ## Installation
 
 ```bash
-pip install modern-fm        # once published; prebuilt wheels, no Rust needed
+pip install modern-fm        # prebuilt wheels for Linux/macOS/Windows, no Rust toolchain needed
 ```
 
-Until the first PyPI release, install from source (requires a Rust toolchain;
-see Development below).
+To build from source instead (e.g. on a platform without a prebuilt wheel), see
+Development below; it requires a Rust toolchain.
 
 ## Usage
 
