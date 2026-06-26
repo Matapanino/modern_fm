@@ -3,6 +3,14 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-06-26
+
+### Fixed
+- Source distribution (sdist) now bundles the `LICENSE` file so it passes PyPI's
+  `License-File` metadata validation. (The 0.2.0 sdist upload was rejected for
+  this reason; the 0.2.0 wheels were unaffected and remain installable.)
+- Release workflow publishes with `skip-existing` for idempotent re-runs.
+
 ## [0.2.0] - 2026-06-26
 
 Training-quality & throughput release. The Rust backend remains parity-tested

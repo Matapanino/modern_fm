@@ -5,7 +5,7 @@ from .ffm import FFMClassifier
 from .fm import FMClassifier, FMRegressor
 from .preprocessing import CategoricalEncoder
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "FMClassifier",
