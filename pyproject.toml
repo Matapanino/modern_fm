@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "modern-fm"
-version = "0.1.0.dev0"
+version = "0.2.0"
 description = "Fast, sklearn-compatible Factorization Machines and Field-aware Factorization Machines"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,6 +31,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/Matapanino/modern_fm"
+Repository = "https://github.com/Matapanino/modern_fm"
+Issues = "https://github.com/Matapanino/modern_fm/issues"
 
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"
