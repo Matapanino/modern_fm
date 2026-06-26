@@ -49,9 +49,10 @@
 - `partial_fit`, `warm_start=True`
 - pairwise dropout, interaction pruning
 - calibration helper
-- libffm format loader/exporter
+- [x] libffm format loader/exporter (`load_libffm` / `dump_libffm`, round-trip tested)
 - model inspection: top interactions
-- pandas/polars input
+- [x] pandas/polars input (DataFrames via sklearn `validate_data`;
+  `feature_names_in_` recorded, column reorder rejected at predict)
 - [x] CI + release pipeline: `.github/workflows/ci.yml` (pytest + ruff across
   {Linux, macOS, Windows} × py3.10–3.13, plus cargo test/clippy) and
   `release.yml` (abi3 wheels via maturin-action + sdist, PyPI trusted publishing

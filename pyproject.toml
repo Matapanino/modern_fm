@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.4"]
+dev = ["pytest>=7", "ruff>=0.4", "pandas", "polars"]
 
 [project.urls]
 Homepage = "https://github.com/Matapanino/modern_fm"

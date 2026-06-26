@@ -13,6 +13,11 @@ All notable changes to `modern_fm` are documented here. This project adheres to
   `feature_names_in_`). `CategoricalEncoder` is now a `TransformerMixin`.
   `FFMClassifier.fit(X, y)` no longer requires `field_ids` (each column defaults
   to its own field). **scikit-learn (>=1.6) is now a runtime dependency.**
+- pandas / polars DataFrame input: `fit`/`predict` accept DataFrames (columns
+  taken in order, `feature_names_in_` recorded, column reorder rejected at
+  predict), with ndarray-parity tests.
+- libffm text-format I/O: `load_libffm` / `dump_libffm` for the
+  `<label> field:feature:value ...` format, with round-trip tests.
 
 ## [0.2.1] - 2026-06-26
 
