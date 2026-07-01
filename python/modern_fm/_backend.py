@@ -26,6 +26,13 @@ def has_rust():
     return _rust is not None
 
 
+def has_cuda():
+    """True when the extension was built with the `cuda-backend` feature AND a
+    CUDA driver + device are present at runtime (docs/gpu_backend_plan.md).
+    The getattr guard keeps older prebuilt extensions working."""
+    return _rust is not None and getattr(_rust, "has_cuda", lambda: False)()
+
+
 def _prep_dense(X):
     return np.ascontiguousarray(X, dtype=np.float64)
 

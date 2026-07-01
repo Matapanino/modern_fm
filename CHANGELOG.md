@@ -6,6 +6,14 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **CUDA backend plumbing** (no kernels yet; docs/gpu_backend_plan.md): an
+  optional `cuda-backend` Cargo feature (cudarc with runtime dynamic loading —
+  builds need no CUDA toolkit; skipped on macOS), `_backend.has_cuda()`, and
+  `backend="cuda"` accepted by every estimator with clear errors —
+  `RuntimeError` without a CUDA build/driver/device, `NotImplementedError`
+  while no CUDA kernels exist; never a silent CPU fallback. CI gained a
+  `cuda-check` job compiling the feature on a GPU-less runner. CPU-only
+  builds, wheels and imports are unchanged.
 - **`BiInteractionPooling`** — bi-interaction pooling (He & Chua, SIGIR 2017)
   as an sklearn transformer: fits an FM and emits the k-dim second-order
   interaction vector `0.5 * ((Σᵢxᵢvᵢ)² − Σᵢ(xᵢvᵢ)²)` for downstream models

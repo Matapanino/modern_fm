@@ -136,11 +136,16 @@ groundwork (kernels land separately, gated on real-GPU validation — see
     (+ `bi_interaction(X)` on the FM estimators), collapse-to-FM identity
     test at 1e-12, Pipeline + `check_estimator` + pickle tests, api_design
     docs.
-- [ ] **CUDA plumbing (no kernels)** — `cuda-backend` Cargo feature (cudarc,
-  dynamic loading), `_backend.has_cuda()`, `backend="cuda"` accepted with
-  clear errors when unavailable, CI `cargo check --features cuda-backend`
-  job. Kernels (FM CSR prediction first) follow in a separate PR that merges
-  only after validation on a real GPU (runbook in the PR). _Priority: P2._
+- [x] **CUDA plumbing (no kernels)** — `cuda-backend` Cargo feature (cudarc
+  0.19, default `fallback-dynamic-loading` = no CUDA toolkit at build time;
+  target-gated off on macOS), `rust/src/cuda/mod.rs` `available()`, always-
+  registered `has_cuda()` pyfunction, `_backend.has_cuda()`,
+  `backend="cuda"` accepted at fit with clear errors (RuntimeError without a
+  CUDA build/device, NotImplementedError while no kernels exist — never a
+  silent CPU fallback), CI `cuda-check` job (`cargo check/clippy --features
+  cuda-backend`, in the `ci-success` gate). Kernels (FM CSR prediction
+  first) follow in a separate PR that merges only after validation on a real
+  GPU (runbook in the PR). _Priority: P2._
 
 ## v1.0 — stable release
 
