@@ -73,17 +73,19 @@ pub fn predict_csr(
     if k == 0 || k > 1024 {
         return Err(format!("CUDA FM prediction supports 1 <= k <= 1024, got {k}"));
     }
-    let e = |what: &str| move |err| format!("CUDA {what} failed: {err:?}");
+    fn e<E: std::fmt::Debug>(what: &'static str) -> impl Fn(E) -> String {
+        move |err| format!("CUDA {what} failed: {err:?}")
+    }
     let ctx = CudaContext::new(0).map_err(e("context creation"))?;
     let ptx = compile_ptx(KERNEL_SRC).map_err(|err| format!("NVRTC compile failed: {err:?}"))?;
     let module = ctx.load_module(ptx).map_err(e("module load"))?;
     let func = module.load_function("fm_predict_csr").map_err(e("function load"))?;
     let stream = ctx.default_stream();
-    let d_indptr = stream.memcpy_stod(indptr).map_err(e("indptr upload"))?;
-    let d_indices = stream.memcpy_stod(indices).map_err(e("indices upload"))?;
-    let d_data = stream.memcpy_stod(data).map_err(e("data upload"))?;
-    let d_w = stream.memcpy_stod(w).map_err(e("w upload"))?;
-    let d_v = stream.memcpy_stod(v).map_err(e("V upload"))?;
+    let d_indptr = stream.clone_htod(indptr).map_err(e("indptr upload"))?;
+    let d_indices = stream.clone_htod(indices).map_err(e("indices upload"))?;
+    let d_data = stream.clone_htod(data).map_err(e("data upload"))?;
+    let d_w = stream.clone_htod(w).map_err(e("w upload"))?;
+    let d_v = stream.clone_htod(v).map_err(e("V upload"))?;
     let mut d_out = stream.alloc_zeros::<f64>(n_rows).map_err(e("output alloc"))?;
     let cfg = LaunchConfig {
         grid_dim: (n_rows as u32, 1, 1),
@@ -104,5 +106,5 @@ pub fn predict_csr(
     // Safety: the kernel reads/writes exactly the buffers bound above, with
     // shapes validated by the PyO3 layer (CSR structure, w/V lengths).
     unsafe { launch.launch(cfg) }.map_err(e("kernel launch"))?;
-    stream.memcpy_dtov(&d_out).map_err(e("output download"))
+    stream.clone_dtoh(&d_out).map_err(e("output download"))
 }
