@@ -454,3 +454,10 @@ def fwfm_fit_multiclass(
     if ftrl_state is not None:
         ftrl_state[:] = ftrl_t
     return w0, w, V, r
+
+
+def fm_bi_interaction(X, V):
+    """Bi-interaction pooled features (n, k); NumPy is already two sparse
+    matmuls (BLAS-grade, O(nnz k)), so there is no Rust kernel — this wrapper
+    exists so one can slot in later without an API change."""
+    return _reference.fm_bi_interaction(X, V)
