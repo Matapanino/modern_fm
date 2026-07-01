@@ -6,6 +6,15 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **CUDA FM prediction** (docs/gpu_backend_plan.md milestone 1): an NVRTC
+  kernel for FM CSR prediction (`rust/src/cuda/fm.rs`, one block per row /
+  one thread per factor, transfer-inclusive). Usage: fit on
+  `backend="rust_cpu"`, then `set_params(backend="cuda")` for inference;
+  FFM/FwFM prediction and all training still raise `NotImplementedError`
+  under CUDA. Parity is tolerance-based (rtol/atol 1e-10,
+  `tests/test_cuda_parity.py`, skipped without a GPU) and validated on a real
+  GPU per `docs/cuda_validation_runbook.md`; `benchmarks/bench_cuda.py`
+  reports transfer-inclusive CPU-vs-CUDA timings.
 - **CUDA backend plumbing** (no kernels yet; docs/gpu_backend_plan.md): an
   optional `cuda-backend` Cargo feature (cudarc with runtime dynamic loading —
   builds need no CUDA toolkit; skipped on macOS), `_backend.has_cuda()`, and
