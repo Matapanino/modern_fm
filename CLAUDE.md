@@ -25,9 +25,10 @@ and FFM binary (logistic/squared) + multiclass softmax, optimizers
 SGD/AdaGrad/Adam/FTRL, mini-batch (`batch_size`) and `rayon` row-parallelism
 (`n_jobs`) — dispatched through the private `modern_fm._backend` module (NumPy
 reference fallback when the extension is not built). Early stopping now works for
-every optimizer (incl. FTRL) across binary and multiclass FM/FFM; the
-Adam/FTRL/multiclass optimizer-state hand-offs round-trip through the NumPy
-reference path. `partial_fit` (sklearn first-call `classes`) and `warm_start` add
+every optimizer (incl. FTRL) across binary and multiclass FM/FFM, and every
+optimizer-state hand-off (AdaGrad/Adam/FTRL, binary + multiclass) round-trips
+through the Rust kernel — the epoch-driven loop is bit-identical to a single
+multi-epoch Rust call. `partial_fit` (sklearn first-call `classes`) and `warm_start` add
 incremental/streaming training for all four estimators, with an exact
 optimizer-state round-trip (`python/modern_fm/_partial.py`). Estimators:
 `FMRegressor`, `FMClassifier`, `FFMClassifier`, `FFMRegressor`; scikit-learn is a

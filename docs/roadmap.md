@@ -94,19 +94,52 @@ streaming / out-of-core training. No new model family, no release-infra work.
     optimizer-state round-trip); contract added to `docs/api_design.md`;
     reference parity preserved; CHANGELOG updated.
 
-## v1.0 — stable release
+## v0.5 — Rust ES fast path, FwFM, pooling, CUDA plumbing
 
-Headline model variant + production-CTR features + docs/bench polish + API
-freeze. Shipping this milestone = tagging v1.0.0.
+Performance completion of the early-stopping matrix, the v1.0 headline model
+pulled forward, a research-honest `nfm_pooling`, and locally-testable CUDA
+groundwork (kernels land separately, gated on real-GPU validation — see
+`docs/gpu_backend_plan.md`).
 
-- [ ] **FwFM (`FwFMClassifier`)** — Field-weighted FM; the 1.0 headline variant.
-  _Priority: P0._
+- [x] **Rust early-stopping fast path** — every per-epoch optimizer-state
+  hand-off (AdaGrad accumulators, Adam moments, FTRL `(z, n)`, per-class
+  multiclass state) now round-trips through the Rust kernels via optional
+  `state`/`adam_state`/`ftrl_state` PyO3 arguments; `_backend` dispatches to
+  the reference only when the extension is missing. The epoch-driven ES loop
+  is bit-identical to a single multi-epoch Rust call (tested per optimizer ×
+  {FM, FFM} × {binary, multiclass}). ES fits sped up ~14–170x for the
+  previously reference-bound cells (Adam/FTRL/multiclass; FFM+Adam ES
+  49.5 s → 0.86 s on the synthetic bench); `partial_fit`/`warm_start` ride the
+  same path. _Priority: P0._
+- [ ] **FwFM (`FwFMClassifier`)** — Field-weighted FM (moved up from v1.0; it
+  remains the 1.0 headline). _Priority: P0._
   - DoD: write `docs/math_spec_fwfm.md` FIRST (field-pair weights
     `r_{f(i),f(j)}`, exact prediction + loss); then NumPy reference → Rust kernel
     → `FwFMClassifier`, with a parity test at each layer; existing FM/FFM
     formulas untouched (no DeepFM/AFM substitution); `check_estimator`,
     save/load, `__all__` + api_design + CHANGELOG. (AFM/FEFM follow this template
     post-1.0.)
+- [ ] **Bi-interaction pooling (`BiInteractionPooling`)** — the honest
+  "nfm_pooling": a sklearn transformer emitting the k-dim bi-interaction
+  vector `0.5 * ((sum_i x_i v_i)^2 - sum_i (x_i v_i)^2)` from a fitted FM for
+  downstream models. As a *predictor* a linear head over this provably
+  collapses to plain FM (NFM = this + MLP, out of scope), so it ships as a
+  feature transform, not a model. _Priority: P1._
+  - DoD: `_reference.fm_bi_interaction` (+ `_backend` wrapper), transformer
+    with `fit`/`transform`/`get_feature_names_out`, collapse-to-FM property
+    test at 1e-12, Pipeline integration test, `check_estimator`, docs.
+- [ ] **CUDA plumbing (no kernels)** — `cuda-backend` Cargo feature (cudarc,
+  dynamic loading), `_backend.has_cuda()`, `backend="cuda"` accepted with
+  clear errors when unavailable, CI `cargo check --features cuda-backend`
+  job. Kernels (FM CSR prediction first) follow in a separate PR that merges
+  only after validation on a real GPU (runbook in the PR). _Priority: P2._
+
+## v1.0 — stable release
+
+Headline model variant + production-CTR features + docs/bench polish + API
+freeze. Shipping this milestone = tagging v1.0.0.
+
+- [ ] **FwFM** — pulled into v0.5 (see above); the v1.0 gate keeps its DoD.
 - [ ] **Probability calibration** — calibrated `predict_proba` for CTR.
   _Priority: P1._
   - DoD: sklearn `CalibratedClassifierCV`-compatible (recommended) or built-in
