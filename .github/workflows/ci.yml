@@ -55,10 +55,35 @@ jobs:
           PYO3_PYTHON: python
         run: cargo clippy --all-targets -- -D warnings
 
+  # The optional CUDA backend must keep compiling without a CUDA toolkit
+  # (cudarc dynamic loading; docs/gpu_backend_plan.md). No GPU here — CUDA
+  # execution is validated out-of-band on a real GPU before kernel PRs merge.
+  cuda-check:
+    name: cuda-check (cargo check/clippy --features cuda-backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: cargo check (cuda-backend)
+        working-directory: rust
+        env:
+          PYO3_PYTHON: python
+        run: cargo check --features cuda-backend
+      - name: cargo clippy (cuda-backend)
+        working-directory: rust
+        env:
+          PYO3_PYTHON: python
+        run: cargo clippy --all-targets --features cuda-backend -- -D warnings
+
   ci-success:
     name: ci-success
     if: always()
-    needs: [test, rust]
+    needs: [test, rust, cuda-check]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job did not succeed

@@ -33,7 +33,9 @@ model = FMClassifier(
     min_delta=0.0,
     warm_start=False,         # fit() resumes from the previous solution + optimizer state
     dtype="float32",          # "float32" | "float64"
-    backend="rust_cpu",       # fixed in v0.1; later "cuda", "torch"
+    backend="rust_cpu",       # or "cuda": requires a cuda-backend build + GPU; no
+                              # kernels yet -> NotImplementedError, never a silent
+                              # CPU fallback (docs/gpu_backend_plan.md)
     random_state=None,
     n_jobs=-1,
     verbose=0,

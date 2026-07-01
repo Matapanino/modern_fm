@@ -14,6 +14,8 @@ use numpy::{
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+#[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+mod cuda;
 mod data;
 mod ffm;
 mod fm;
@@ -1369,8 +1371,25 @@ fn fwfm_fit_multiclass_csr<'py>(
     out.map_err(val_err)
 }
 
+/// True when the extension was built with the `cuda-backend` feature AND a
+/// CUDA driver + device are present at runtime (docs/gpu_backend_plan.md).
+/// Always registered so `_backend.has_cuda()` can call it unconditionally;
+/// CPU-only builds simply return false.
+#[pyfunction]
+fn has_cuda() -> bool {
+    #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+    {
+        cuda::available()
+    }
+    #[cfg(not(all(feature = "cuda-backend", not(target_os = "macos"))))]
+    {
+        false
+    }
+}
+
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(has_cuda, m)?)?;
     m.add_function(wrap_pyfunction!(fm_predict_fast_dense, m)?)?;
     m.add_function(wrap_pyfunction!(fm_predict_fast_csr, m)?)?;
     m.add_function(wrap_pyfunction!(ffm_predict_dense, m)?)?;

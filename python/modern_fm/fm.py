@@ -44,6 +44,31 @@ from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
 
 
+def _validate_backend(backend):
+    """Validate the `backend` constructor parameter at fit time.
+
+    "rust_cpu" is the (only implemented) default. "cuda" is accepted as
+    plumbing for the optional CUDA backend (docs/gpu_backend_plan.md): it
+    requires a `cuda-backend` build plus an NVIDIA driver + device, and until
+    the first CUDA kernels land every operation raises NotImplementedError —
+    there is deliberately no silent CPU fallback.
+    """
+    if backend not in ("rust_cpu", "cuda"):
+        raise ValueError(f"unknown backend {backend!r}; expected 'rust_cpu' or 'cuda'")
+    if backend == "cuda":
+        if not _backend.has_cuda():
+            raise RuntimeError(
+                "backend='cuda' requires modern_fm built with the `cuda-backend` "
+                "Cargo feature and an NVIDIA GPU + driver at runtime; this "
+                "build/machine has neither (see docs/gpu_backend_plan.md)"
+            )
+        raise NotImplementedError(
+            "backend='cuda' has no kernels yet: FM/FFM/FwFM prediction and "
+            "training currently run only on backend='rust_cpu' "
+            "(docs/gpu_backend_plan.md tracks the CUDA milestones)"
+        )
+
+
 def _check_X(X, n_features=None):
     if not (sp.issparse(X) or isinstance(X, np.ndarray)):
         X = np.asarray(X, dtype=np.float64)
@@ -172,8 +197,7 @@ class _FMBase(BaseEstimator, ModelIOMixin):
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
         if self.dtype not in ("float32", "float64"):
             raise ValueError(f"unknown dtype {self.dtype!r}; expected 'float32' or 'float64'")
-        if self.backend != "rust_cpu":
-            raise ValueError(f"unknown backend {self.backend!r}; only 'rust_cpu' exists in v0.1")
+        _validate_backend(self.backend)
         if not (isinstance(self.batch_size, (int, np.integer)) and self.batch_size >= 1):
             raise ValueError(f"batch_size must be a positive integer, got {self.batch_size!r}")
         _resolve_n_jobs(self.n_jobs)  # validate (raises on a bad n_jobs)

@@ -41,6 +41,7 @@ from .fm import (
     _combine_weights,
     _resolve_n_jobs,
     _smooth,
+    _validate_backend,
     _validate_X,
 )
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
@@ -65,8 +66,7 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
         if self.dtype not in ("float32", "float64"):
             raise ValueError(f"unknown dtype {self.dtype!r}; expected 'float32' or 'float64'")
-        if self.backend != "rust_cpu":
-            raise ValueError(f"unknown backend {self.backend!r}; only 'rust_cpu' exists in v0.1")
+        _validate_backend(self.backend)
         if not (isinstance(self.batch_size, (int, np.integer)) and self.batch_size >= 1):
             raise ValueError(f"batch_size must be a positive integer, got {self.batch_size!r}")
         _resolve_n_jobs(self.n_jobs)  # validate (raises on a bad n_jobs)
