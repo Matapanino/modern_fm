@@ -114,3 +114,51 @@ def ffm_predict(X, field_ids, w0, w, V):
             s += np.triu(G, k=1).sum()
         out[r] = s
     return out
+
+
+def fwfm_predict_naive(X, field_ids, w0, w, V, r):
+    """FwFM prediction via the explicit pairwise loop (docs/math_spec_fwfm.md).
+
+    y_hat = w0 + sum_i w_i x_i + sum_{i<j} r_{f_i f_j} <v_i, v_j> x_i x_j
+
+    `V` is FM-shaped (n_features, k); `r` is (n_fields, n_fields) with only the
+    upper triangle (incl. diagonal) read via r[min(f_i,f_j), max(f_i,f_j)].
+    """
+    field_ids = np.asarray(field_ids)
+    w = np.asarray(w, dtype=np.float64)
+    V = np.asarray(V, dtype=np.float64)
+    r = np.asarray(r, dtype=np.float64)
+    out = np.empty(X.shape[0], dtype=np.float64)
+    for row, (idx, val) in enumerate(_as_dense_rows(X)):
+        s = w0 + w[idx] @ val
+        for a in range(len(idx)):
+            i, xi = idx[a], val[a]
+            for b in range(a + 1, len(idx)):
+                j, xj = idx[b], val[b]
+                fa, fb = field_ids[i], field_ids[j]
+                s += r[min(fa, fb), max(fa, fb)] * (V[i] @ V[j]) * xi * xj
+        out[row] = s
+    return out
+
+
+def fwfm_predict(X, field_ids, w0, w, V, r):
+    """FwFM prediction, vectorized per row. Dense or CSR input.
+
+    For each row with nonzero columns nz, builds
+    G[a, b] = r_{f_a f_b} <v_a, v_b> x_a x_b and sums the strict upper
+    triangle. O(z^2 k) per row (docs/math_spec_fwfm.md fixes the pair order).
+    """
+    field_ids = np.asarray(field_ids)
+    w = np.asarray(w, dtype=np.float64)
+    V = np.asarray(V, dtype=np.float64)
+    r = np.asarray(r, dtype=np.float64)
+    out = np.empty(X.shape[0], dtype=np.float64)
+    for row, (idx, val) in enumerate(_as_dense_rows(X)):
+        s = w0 + w[idx] @ val
+        if len(idx) >= 2:
+            f = field_ids[idx]
+            W = r[np.minimum.outer(f, f), np.maximum.outer(f, f)]  # r_{f_a f_b}
+            G = (V[idx] @ V[idx].T) * W * np.outer(val, val)
+            s += np.triu(G, k=1).sum()
+        out[row] = s
+    return out

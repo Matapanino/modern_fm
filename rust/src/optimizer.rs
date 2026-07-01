@@ -295,6 +295,43 @@ pub fn class_slice(buf: &mut [f64], c: usize, len: usize) -> &mut [f64] {
     }
 }
 
+/// Mutable optimizer state for one extra array-shaped parameter group (FwFM's
+/// field-pair matrix R): AdaGrad accumulator (always full-size) plus Adam
+/// `(m, s, t)` and FTRL `(z, n)` slices (empty when their optimizer is off).
+/// Coordinates step through `step_coord` exactly like `w`/`V` coordinates.
+pub struct GroupStateMut<'a> {
+    pub acc: &'a mut [f64],
+    pub m: &'a mut [f64],
+    pub s: &'a mut [f64],
+    pub t: &'a mut [f64],
+    pub z: &'a mut [f64],
+    pub n: &'a mut [f64],
+}
+
+/// Multiclass counterpart of `GroupStateMut`: (C, ·)-row-major backing with
+/// per-class views (`acc` always full-size; Adam/FTRL arrays empty-safe).
+pub struct McGroupState<'a> {
+    pub acc: &'a mut [f64],
+    pub m: &'a mut [f64],
+    pub s: &'a mut [f64],
+    pub t: &'a mut [f64],
+    pub z: &'a mut [f64],
+    pub n: &'a mut [f64],
+}
+
+impl McGroupState<'_> {
+    pub fn class_views(&mut self, c: usize, len: usize) -> GroupStateMut<'_> {
+        GroupStateMut {
+            acc: &mut self.acc[c * len..(c + 1) * len],
+            m: class_slice(self.m, c, len),
+            s: class_slice(self.s, c, len),
+            t: class_slice(self.t, c, len),
+            z: class_slice(self.z, c, len),
+            n: class_slice(self.n, c, len),
+        }
+    }
+}
+
 /// Multiclass optimizer-state backing, all (C, ·) row-major: AdaGrad
 /// accumulators plus Adam / FTRL per-coordinate state. The `acc_*` and `*_w0`
 /// arrays are always full-size (w0-level state is only C floats); the large

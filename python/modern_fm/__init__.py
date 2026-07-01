@@ -3,6 +3,7 @@
 from ._base import NotFittedError
 from .ffm import FFMClassifier, FFMRegressor
 from .fm import FMClassifier, FMRegressor
+from .fwfm import FwFMClassifier
 from .libffm import dump_libffm, load_libffm
 from .preprocessing import CategoricalEncoder
 
@@ -13,6 +14,7 @@ __all__ = [
     "FMRegressor",
     "FFMClassifier",
     "FFMRegressor",
+    "FwFMClassifier",
     "CategoricalEncoder",
     "NotFittedError",
     "load_libffm",
