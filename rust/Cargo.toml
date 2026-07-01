@@ -15,6 +15,8 @@ crate-type = ["cdylib", "rlib"]
 # `fallback-dynamic-loading` dlopens the driver at runtime, so this feature
 # compiles WITHOUT a CUDA toolkit (verified by the ci.yml `cuda-check` job);
 # it is a no-op on macOS (no CUDA support), where the dependency is skipped.
+# cudarc requires pinning an API version: `cuda-12000` (CUDA 12.0) keeps the
+# generated bindings loadable on every CUDA 12 driver.
 cuda-backend = ["dep:cudarc"]
 
 [dependencies]
@@ -25,7 +27,7 @@ numpy = "0.25"
 rayon = "1"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-cudarc = { version = "0.19", optional = true }
+cudarc = { version = "0.19", optional = true, features = ["cuda-12000"] }
 
 [profile.release]
 lto = true
