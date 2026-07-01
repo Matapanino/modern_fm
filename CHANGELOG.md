@@ -5,6 +5,20 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added
+- **`FwFMClassifier`** — Field-weighted Factorization Machine (Pan et al.,
+  WWW 2018; `docs/math_spec_fwfm.md`): FM-shaped factors plus one learned
+  scalar weight per field pair (`r_`, upper triangle used) scaling each
+  pairwise interaction; `r_` initializes to ones so a fresh FwFM is exactly a
+  plain FM (property-tested at 1e-12). Binary logistic + multiclass softmax,
+  all four optimizers, mini-batch, early stopping / `eval_set` (bit-exact
+  four-group state hand-off through the Rust kernel), `partial_fit` /
+  `warm_start`, save/load + pickle, `check_estimator`-clean. Layered exactly
+  like FM/FFM: NumPy reference (`fwfm_predict[_naive]`,
+  `fwfm_fit[_multiclass]_reference`) → Rust kernel (`rust/src/fwfm.rs`) →
+  `_backend` dispatch → estimator, with parity tests at each layer. Training
+  is serial in v0.5 (`n_jobs` accepted, not used by FwFM).
+
 ### Changed
 - **Rust early-stopping fast path**: every per-epoch optimizer-state hand-off —
   AdaGrad accumulators, Adam moments, FTRL `(z, n)`, and the per-class

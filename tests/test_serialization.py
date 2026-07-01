@@ -4,9 +4,16 @@ import pickle
 
 import numpy as np
 import pytest
-from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, FMRegressor, NotFittedError
+from modern_fm import (
+    FFMClassifier,
+    FFMRegressor,
+    FMClassifier,
+    FMRegressor,
+    FwFMClassifier,
+    NotFittedError,
+)
 
-ESTIMATORS = [FMClassifier, FMRegressor, FFMClassifier, FFMRegressor]
+ESTIMATORS = [FMClassifier, FMRegressor, FFMClassifier, FFMRegressor, FwFMClassifier]
 
 
 def _fit(cls, seed=0):
@@ -14,7 +21,7 @@ def _fit(cls, seed=0):
     X = rng.normal(size=(40, 5))
     y = (X[:, 0] > 0).astype(int)
     model = cls(random_state=0, max_iter=20)
-    if cls is FFMClassifier:
+    if cls in (FFMClassifier, FwFMClassifier):
         model.fit(X, y, field_ids=np.arange(5) % 2)
     elif cls is FFMRegressor:
         model.fit(X, X[:, 0], field_ids=np.arange(5) % 2)

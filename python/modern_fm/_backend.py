@@ -328,3 +328,129 @@ def ffm_fit_multiclass(
     if ftrl_state is not None:
         ftrl_state[:] = ftrl_t
     return w0, w, V
+
+
+def fwfm_predict(X, field_ids, w0, w, V, r):
+    """FwFM prediction (math_spec_fwfm.md), Rust-accelerated when available."""
+    if _rust is None:
+        return _reference.fwfm_predict(X, field_ids, w0, w, V, r)
+    field_ids = _prep_vec(field_ids, dtype=np.int64)
+    w = _prep_vec(w)
+    V = _prep_dense(V)
+    r = _prep_dense(r)
+    if sp.issparse(X):
+        indptr, indices, data, n_features = _prep_csr(X)
+        return _rust.fwfm_predict_csr(
+            indptr, indices, data, n_features, field_ids, float(w0), w, V, r
+        )
+    return _rust.fwfm_predict_dense(_prep_dense(X), field_ids, float(w0), w, V, r)
+
+
+def _fwfm_acc_arrays(state, w, V, r):
+    """FwFM AdaGrad accumulators (acc_w0, acc_w, acc_v, acc_r) from `state`
+    ([acc_w0, acc_w, acc_V, acc_R]) or fresh zeros; see `_acc_arrays`."""
+    if state is None:
+        return 0.0, np.zeros(len(w)), np.zeros_like(V), np.zeros_like(r)
+    acc_w0, acc_w, acc_v, acc_r = state
+    return float(acc_w0), _prep_vec(acc_w), _prep_dense(acc_v), _prep_dense(acc_r)
+
+
+def fwfm_fit(
+    X, y, field_ids, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors,
+    row_orders, l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
+    ftrl_beta=1.0, batch_size=1, sample_weight=None, state=None, adam_state=None,
+    ftrl_state=None,
+):
+    """Train an FwFM (math_spec_fwfm.md); `params` = (w0, w, V, R), returns new
+    float64 copies. Serial (no n_jobs in v0.5). `state` = [acc_w0, acc_w,
+    acc_V, acc_R]; `adam_state` / `ftrl_state` follow `new_adam_state_fwfm` /
+    `new_ftrl_state_fwfm` and round-trip through the Rust kernel, like fm_fit.
+    """
+    if _rust is None:
+        return _reference_train.fwfm_fit_reference(
+            X, y, field_ids, params, loss=loss, optimizer=optimizer,
+            learning_rate=learning_rate, l2_linear=l2_linear, l2_factors=l2_factors,
+            l1_linear=l1_linear, l1_factors=l1_factors, row_orders=row_orders,
+            beta_1=beta_1, beta_2=beta_2, epsilon=epsilon, ftrl_beta=ftrl_beta,
+            batch_size=batch_size, sample_weight=sample_weight, state=state,
+            adam_state=adam_state, ftrl_state=ftrl_state,
+        )
+    w0, w, V, r = params
+    field_ids = _prep_vec(field_ids, dtype=np.int64)
+    r = np.array(r, dtype=np.float64, order="C", copy=True)
+    (indptr, indices, data, n_features), y, w0, w, V, row_orders = _prep_fit(
+        X, y, (w0, w, V), row_orders
+    )
+    sw = np.ones(len(y)) if sample_weight is None else _prep_vec(sample_weight)
+    acc_w0, acc_w, acc_v, acc_r = _fwfm_acc_arrays(state, w, V, r)
+    adam_t = None if adam_state is None else _adam_arrays(adam_state)
+    ftrl_t = None if ftrl_state is None else _ftrl_arrays(ftrl_state)
+    w0, acc_w0, adam_sc, ftrl_sc = _rust.fwfm_fit_csr(
+        indptr, indices, data, n_features, y, sw, field_ids, w0, acc_w0, w, V, r,
+        acc_w, acc_v, acc_r, loss, optimizer, learning_rate, l2_linear, l2_factors,
+        beta_1, beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
+        adam_state=adam_t, ftrl_state=ftrl_t,
+    )
+    if state is not None:
+        state[0], state[1], state[2], state[3] = acc_w0, acc_w, acc_v, acc_r
+    if adam_state is not None:  # arrays mutated in place; write back scalars + preps
+        adam_state[0], adam_state[1], adam_state[2] = adam_sc
+        adam_state[3:] = adam_t[3:]
+    if ftrl_state is not None:
+        ftrl_state[0], ftrl_state[1] = ftrl_sc
+        ftrl_state[2:] = ftrl_t[2:]
+    return w0, w, V, r
+
+
+def fwfm_fit_multiclass(
+    X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors,
+    row_orders, label_smoothing=0.0, l1_linear=0.0, l1_factors=0.0, beta_1=0.9,
+    beta_2=0.999, epsilon=1e-8, ftrl_beta=1.0, batch_size=1, sample_weight=None,
+    state=None, adam_state=None, ftrl_state=None,
+):
+    """Train a multiclass (softmax) FwFM (one FwFM per class, coupled by softmax).
+
+    `params` = (w0 (C,), w (C, n), V (C, n, k), R (C, F, F)); `y` holds class
+    indices in [0, C). Serial. `state` / `adam_state` / `ftrl_state` round-trip
+    the per-class optimizer state through the Rust kernel (see fm_fit_multiclass).
+    """
+    if _rust is None:
+        return _reference_train.fwfm_fit_multiclass_reference(
+            X, y, field_ids, params, optimizer=optimizer, learning_rate=learning_rate,
+            l2_linear=l2_linear, l2_factors=l2_factors, l1_linear=l1_linear,
+            l1_factors=l1_factors, row_orders=row_orders, label_smoothing=label_smoothing,
+            beta_1=beta_1, beta_2=beta_2, epsilon=epsilon, ftrl_beta=ftrl_beta,
+            batch_size=batch_size, sample_weight=sample_weight,
+            state=state, adam_state=adam_state, ftrl_state=ftrl_state,
+        )
+    w0, w, V, r = params
+    w0 = np.array(w0, dtype=np.float64, order="C", copy=True)  # (C,), mutated in place
+    w = np.array(w, dtype=np.float64, order="C", copy=True)  # (C, n)
+    V = np.array(V, dtype=np.float64, order="C", copy=True)  # (C, n, k)
+    r = np.array(r, dtype=np.float64, order="C", copy=True)  # (C, F, F)
+    y = _prep_vec(y, dtype=np.int64)
+    field_ids = _prep_vec(field_ids, dtype=np.int64)
+    row_orders = np.ascontiguousarray(row_orders, dtype=np.int64)
+    if row_orders.ndim == 1:
+        row_orders = row_orders[None, :]
+    Xc = X if sp.issparse(X) else sp.csr_matrix(np.asarray(X, dtype=np.float64))
+    indptr, indices, data, n_features = _prep_csr(Xc)
+    sw = np.ones(len(y)) if sample_weight is None else _prep_vec(sample_weight)
+    st_t = None if state is None else _state_arrays(state)
+    adam_t = None if adam_state is None else _state_arrays(adam_state)
+    ftrl_t = None if ftrl_state is None else _state_arrays(ftrl_state)
+    _rust.fwfm_fit_multiclass_csr(
+        indptr, indices, data, n_features, y, sw, field_ids, w0, w, V, r,
+        optimizer, learning_rate, l2_linear, l2_factors, label_smoothing,
+        beta_1, beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
+        state=st_t, adam_state=adam_t, ftrl_state=ftrl_t,
+    )
+    # all state arrays are mutated in place; write the prepped arrays back into
+    # the callers' lists in case ascontiguousarray re-allocated
+    if state is not None:
+        state[:] = st_t
+    if adam_state is not None:
+        adam_state[:] = adam_t
+    if ftrl_state is not None:
+        ftrl_state[:] = ftrl_t
+    return w0, w, V, r
