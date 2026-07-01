@@ -3,6 +3,23 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **Rust early-stopping fast path**: every per-epoch optimizer-state hand-off —
+  AdaGrad accumulators, Adam moments, FTRL `(z, n)`, and the per-class
+  multiclass state — now round-trips through the Rust kernels (optional
+  `state` / `adam_state` / `ftrl_state` arguments on the fit entry points).
+  Previously, `early_stopping` / `eval_set` (and `partial_fit` / `warm_start`)
+  with Adam, FTRL, or any multiclass model trained each epoch on the NumPy
+  reference implementation. Results are unchanged — the epoch-driven loop is
+  bit-identical to a single multi-epoch Rust call (new parity tests per
+  optimizer × {FM, FFM} × {binary, multiclass}) — but ES fits are ~14–170x
+  faster in the previously reference-bound cells (synthetic bench: FFM binary
+  Adam ES 49.5 s → 0.86 s, FTRL 49.4 s → 0.29 s; FM multiclass AdaGrad ES
+  3.08 s → 0.09 s). `benchmarks/bench_synthetic.py` gained
+  `bench_early_stopping()`.
+
 ## [0.4.0] - 2026-07-02
 
 ### Added

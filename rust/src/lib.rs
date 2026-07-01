@@ -20,10 +20,45 @@ mod fm;
 mod optimizer;
 
 use data::CsrView;
-use optimizer::{Loss, Optimizer};
+use optimizer::{AdamStateMut, FtrlStateMut, Loss, McState, Optimizer};
 
 fn val_err(msg: String) -> PyErr {
     PyValueError::new_err(msg)
+}
+
+// Optional optimizer-state arguments for the epoch-driven early-stopping
+// hand-off. Layouts mirror `_reference_train.new_adam_state` /
+// `new_ftrl_state`: binary states carry the scalar w0 moments by value
+// (returned updated); multiclass states are all (C, ·) arrays mutated in
+// place. The FFM variants only differ in the factor-array dimensionality.
+type Arr1<'py> = PyReadwriteArray1<'py, f64>;
+type Arr2<'py> = PyReadwriteArray2<'py, f64>;
+type Arr3<'py> = PyReadwriteArray3<'py, f64>;
+type Arr4<'py> = PyReadwriteArray4<'py, f64>;
+type FmAdamArg<'py> = (f64, f64, f64, Arr1<'py>, Arr1<'py>, Arr1<'py>, Arr2<'py>, Arr2<'py>, Arr2<'py>);
+type FmFtrlArg<'py> = (f64, f64, Arr1<'py>, Arr1<'py>, Arr2<'py>, Arr2<'py>);
+type FfmAdamArg<'py> = (f64, f64, f64, Arr1<'py>, Arr1<'py>, Arr1<'py>, Arr3<'py>, Arr3<'py>, Arr3<'py>);
+type FfmFtrlArg<'py> = (f64, f64, Arr1<'py>, Arr1<'py>, Arr3<'py>, Arr3<'py>);
+type FmMcStateArg<'py> = (Arr1<'py>, Arr2<'py>, Arr3<'py>);
+type FmMcAdamArg<'py> = (Arr1<'py>, Arr1<'py>, Arr1<'py>, Arr2<'py>, Arr2<'py>, Arr2<'py>, Arr3<'py>, Arr3<'py>, Arr3<'py>);
+type FmMcFtrlArg<'py> = (Arr1<'py>, Arr1<'py>, Arr2<'py>, Arr2<'py>, Arr3<'py>, Arr3<'py>);
+type FfmMcStateArg<'py> = (Arr1<'py>, Arr2<'py>, Arr4<'py>);
+type FfmMcAdamArg<'py> = (Arr1<'py>, Arr1<'py>, Arr1<'py>, Arr2<'py>, Arr2<'py>, Arr2<'py>, Arr4<'py>, Arr4<'py>, Arr4<'py>);
+type FfmMcFtrlArg<'py> = (Arr1<'py>, Arr1<'py>, Arr2<'py>, Arr2<'py>, Arr4<'py>, Arr4<'py>);
+
+/// Scalar returns of the binary fit kernels: (w0, acc_w0, Adam w0 moments
+/// (m, s, t), FTRL w0 state (z, n)) — the optimizer-state scalars are
+/// meaningful only when the corresponding `*_state` argument was passed.
+type FitScalars = (f64, f64, (f64, f64, f64), (f64, f64));
+
+/// Zeroed local backing for one optimizer-state array when no external state
+/// is passed (`on` = the owning optimizer is active; empty otherwise).
+fn local_state(on: bool, len: usize) -> Vec<f64> {
+    if on {
+        vec![0.0; len]
+    } else {
+        Vec::new()
+    }
 }
 
 fn parse_loss(s: &str) -> PyResult<Loss> {
@@ -214,11 +249,19 @@ fn ffm_predict_csr<'py>(
     Ok(out.map_err(val_err)?.into_pyarray(py))
 }
 
-/// Train an FM in place (w, v, acc_* mutated; new (w0, acc_w0) returned).
-/// AdaGrad accumulators are passed in/out so the caller can drive epochs one
-/// at a time (early stopping); a single all-epochs call passes zeros. See
-/// fm::fit_csr and docs/optimization_spec.md.
+/// Train an FM in place (w, v, acc_*, adam/ftrl arrays mutated; new
+/// (w0, acc_w0, (m_w0, s_w0, t_w0), (z_w0, n_w0)) returned — the scalar
+/// optimizer state is zeros when its optimizer is off). Optimizer state is
+/// passed in/out so the caller can drive epochs one at a time (early
+/// stopping); a single all-epochs call passes zeros / None. See fm::fit_csr
+/// and docs/optimization_spec.md.
 #[pyfunction]
+#[pyo3(signature = (
+    indptr, indices, data, n_features, y, sample_weight, w0, acc_w0, w, v, acc_w, acc_v,
+    loss, optimizer, learning_rate, l2_linear, l2_factors, beta_1, beta_2, epsilon,
+    row_orders, batch_size, n_jobs, l1_linear, l1_factors, ftrl_beta,
+    adam_state=None, ftrl_state=None,
+))]
 #[allow(clippy::too_many_arguments)]
 fn fm_fit_csr<'py>(
     py: Python<'py>,
@@ -248,7 +291,9 @@ fn fm_fit_csr<'py>(
     l1_linear: f64,
     l1_factors: f64,
     ftrl_beta: f64,
-) -> PyResult<(f64, f64)> {
+    mut adam_state: Option<FmAdamArg<'py>>,
+    mut ftrl_state: Option<FmFtrlArg<'py>>,
+) -> PyResult<FitScalars> {
     let loss = parse_loss(loss)?;
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
     if batch_size == 0 {
@@ -274,26 +319,98 @@ fn fm_fit_csr<'py>(
     if acc_w_s.len() != w_s.len() || acc_v_s.len() != v_s.len() {
         return Err(val_err("accumulator shapes must match w and V".to_string()));
     }
+    let v_len = v_s.len();
+    let adam_on = matches!(opt, Optimizer::Adam { .. });
+    let ftrl_on = matches!(opt, Optimizer::Ftrl { .. });
+    if adam_state.is_some() && !adam_on {
+        return Err(val_err("adam_state is only valid for optimizer='adam'".to_string()));
+    }
+    if ftrl_state.is_some() && !ftrl_on {
+        return Err(val_err("ftrl_state is only valid for optimizer='ftrl'".to_string()));
+    }
+    let (mut m_w0, mut s_w0, mut t_w0) =
+        adam_state.as_ref().map_or((0.0, 0.0, 0.0), |t| (t.0, t.1, t.2));
+    let (mut z_w0, mut n_w0) = ftrl_state.as_ref().map_or((0.0, 0.0), |t| (t.0, t.1));
+    let ext_adam = adam_state.is_some();
+    let ext_ftrl = ftrl_state.is_some();
+    let need_adam = adam_on && !ext_adam;
+    let need_ftrl = ftrl_on && !ext_ftrl;
+    let (mut lm_w, mut ls_w, mut lt_w) = (
+        local_state(need_adam, n_features),
+        local_state(need_adam, n_features),
+        local_state(need_adam, n_features),
+    );
+    let (mut lm_v, mut ls_v, mut lt_v) = (
+        local_state(need_adam, v_len),
+        local_state(need_adam, v_len),
+        local_state(need_adam, v_len),
+    );
+    let (mut lz_w, mut ln_w) = (local_state(need_ftrl, n_features), local_state(need_ftrl, n_features));
+    let (mut lz_v, mut ln_v) = (local_state(need_ftrl, v_len), local_state(need_ftrl, v_len));
+    let (m_w_s, s_w_s, t_w_s, m_v_s, s_v_s, t_v_s) = match adam_state.as_mut() {
+        Some(t) => (
+            t.3.as_slice_mut()?, t.4.as_slice_mut()?, t.5.as_slice_mut()?,
+            t.6.as_slice_mut()?, t.7.as_slice_mut()?, t.8.as_slice_mut()?,
+        ),
+        None => (
+            lm_w.as_mut_slice(), ls_w.as_mut_slice(), lt_w.as_mut_slice(),
+            lm_v.as_mut_slice(), ls_v.as_mut_slice(), lt_v.as_mut_slice(),
+        ),
+    };
+    let (z_w_s, n_w_s, z_v_s, n_v_s) = match ftrl_state.as_mut() {
+        Some(t) => (t.2.as_slice_mut()?, t.3.as_slice_mut()?, t.4.as_slice_mut()?, t.5.as_slice_mut()?),
+        None => (lz_w.as_mut_slice(), ln_w.as_mut_slice(), lz_v.as_mut_slice(), ln_v.as_mut_slice()),
+    };
+    if ext_adam
+        && (m_w_s.len() != n_features || s_w_s.len() != n_features || t_w_s.len() != n_features
+            || m_v_s.len() != v_len || s_v_s.len() != v_len || t_v_s.len() != v_len)
+    {
+        return Err(val_err("adam_state shapes must match w and V".to_string()));
+    }
+    if ext_ftrl
+        && (z_w_s.len() != n_features || n_w_s.len() != n_features
+            || z_v_s.len() != v_len || n_v_s.len() != v_len)
+    {
+        return Err(val_err("ftrl_state shapes must match w and V".to_string()));
+    }
+    let adam_view = AdamStateMut {
+        m_w0: &mut m_w0, s_w0: &mut s_w0, t_w0: &mut t_w0,
+        m_w: m_w_s, s_w: s_w_s, t_w: t_w_s, m_v: m_v_s, s_v: s_v_s, t_v: t_v_s,
+    };
+    let ftrl_view = FtrlStateMut {
+        z_w0: &mut z_w0, n_w0: &mut n_w0,
+        z_w: z_w_s, n_w: n_w_s, z_v: z_v_s, n_v: n_v_s,
+    };
     let out = py.allow_threads(|| -> Result<(f64, f64), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args(&csr, y_s, sw_s, &ro_shape, ro)?;
         let mut w0 = w0;
         let mut acc_w0 = acc_w0;
         fm::fit_csr(
-            &csr, y_s, sw_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s, k, loss, opt,
+            &csr, y_s, sw_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s,
+            adam_view, ftrl_view, k, loss, opt,
             learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, ro_shape[1], batch_size,
             n_jobs.max(1), ro,
         );
         Ok((w0, acc_w0))
     });
-    out.map_err(val_err)
+    let (w0, acc_w0) = out.map_err(val_err)?;
+    Ok((w0, acc_w0, (m_w0, s_w0, t_w0), (z_w0, n_w0)))
 }
 
 /// Train a multiclass (softmax) FM in place; w0 (C,), w (C, n_features) and
 /// v (C, n_features, k) are all mutated. `y` holds class indices in [0, C).
-/// AdaGrad accumulators are internal (all epochs in one call, no early-stopping
-/// state). batch_size=1, single-threaded; see fm::fit_multiclass_csr.
+/// `state` (AdaGrad accumulators) / `adam_state` / `ftrl_state` are optional
+/// (C, ·) arrays mutated in place so the caller can drive epochs one at a time
+/// (early stopping); None keeps the state internal (single all-epochs call).
+/// batch_size=1, single-threaded; see fm::fit_multiclass_csr.
 #[pyfunction]
+#[pyo3(signature = (
+    indptr, indices, data, n_features, y, sample_weight, w0, w, v,
+    optimizer, learning_rate, l2_linear, l2_factors, label_smoothing, beta_1, beta_2,
+    epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
+    state=None, adam_state=None, ftrl_state=None,
+))]
 #[allow(clippy::too_many_arguments)]
 fn fm_fit_multiclass_csr<'py>(
     py: Python<'py>,
@@ -319,6 +436,9 @@ fn fm_fit_multiclass_csr<'py>(
     l1_linear: f64,
     l1_factors: f64,
     ftrl_beta: f64,
+    mut state: Option<FmMcStateArg<'py>>,
+    mut adam_state: Option<FmMcAdamArg<'py>>,
+    mut ftrl_state: Option<FmMcFtrlArg<'py>>,
 ) -> PyResult<()> {
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
     if batch_size == 0 {
@@ -341,11 +461,110 @@ fn fm_fit_multiclass_csr<'py>(
             w0_s.len()
         )));
     }
+    let v_len = n_features * k; // per-class factor entries
+    let adam_on = matches!(opt, Optimizer::Adam { .. });
+    let ftrl_on = matches!(opt, Optimizer::Ftrl { .. });
+    if adam_state.is_some() && !adam_on {
+        return Err(val_err("adam_state is only valid for optimizer='adam'".to_string()));
+    }
+    if ftrl_state.is_some() && !ftrl_on {
+        return Err(val_err("ftrl_state is only valid for optimizer='ftrl'".to_string()));
+    }
+    let (ext_state, ext_adam, ext_ftrl) = (state.is_some(), adam_state.is_some(), ftrl_state.is_some());
+    let (need_adam, need_ftrl) = (adam_on && !ext_adam, ftrl_on && !ext_ftrl);
+    // Local fallbacks: AdaGrad accumulators are always full-size; the w0-level
+    // Adam/FTRL arrays are always (C,) (class_views indexes them); the large
+    // per-coordinate arrays are allocated only for the active optimizer.
+    let mut lacc_w0 = local_state(!ext_state, n_classes);
+    let mut lacc_w = local_state(!ext_state, n_classes * n_features);
+    let mut lacc_v = local_state(!ext_state, n_classes * v_len);
+    let (mut lm_w0, mut ls_w0, mut lt_w0) = (
+        local_state(!ext_adam, n_classes),
+        local_state(!ext_adam, n_classes),
+        local_state(!ext_adam, n_classes),
+    );
+    let (mut lm_w, mut ls_w, mut lt_w) = (
+        local_state(need_adam, n_classes * n_features),
+        local_state(need_adam, n_classes * n_features),
+        local_state(need_adam, n_classes * n_features),
+    );
+    let (mut lm_v, mut ls_v, mut lt_v) = (
+        local_state(need_adam, n_classes * v_len),
+        local_state(need_adam, n_classes * v_len),
+        local_state(need_adam, n_classes * v_len),
+    );
+    let (mut lz_w0, mut ln_w0) = (local_state(!ext_ftrl, n_classes), local_state(!ext_ftrl, n_classes));
+    let (mut lz_w, mut ln_w) = (
+        local_state(need_ftrl, n_classes * n_features),
+        local_state(need_ftrl, n_classes * n_features),
+    );
+    let (mut lz_v, mut ln_v) = (
+        local_state(need_ftrl, n_classes * v_len),
+        local_state(need_ftrl, n_classes * v_len),
+    );
+    let (acc_w0_s, acc_w_s, acc_v_s) = match state.as_mut() {
+        Some(t) => (t.0.as_slice_mut()?, t.1.as_slice_mut()?, t.2.as_slice_mut()?),
+        None => (lacc_w0.as_mut_slice(), lacc_w.as_mut_slice(), lacc_v.as_mut_slice()),
+    };
+    let (m_w0_s, s_w0_s, t_w0_s, m_w_s, s_w_s, t_w_s, m_v_s, s_v_s, t_v_s) =
+        match adam_state.as_mut() {
+            Some(t) => (
+                t.0.as_slice_mut()?, t.1.as_slice_mut()?, t.2.as_slice_mut()?,
+                t.3.as_slice_mut()?, t.4.as_slice_mut()?, t.5.as_slice_mut()?,
+                t.6.as_slice_mut()?, t.7.as_slice_mut()?, t.8.as_slice_mut()?,
+            ),
+            None => (
+                lm_w0.as_mut_slice(), ls_w0.as_mut_slice(), lt_w0.as_mut_slice(),
+                lm_w.as_mut_slice(), ls_w.as_mut_slice(), lt_w.as_mut_slice(),
+                lm_v.as_mut_slice(), ls_v.as_mut_slice(), lt_v.as_mut_slice(),
+            ),
+        };
+    let (z_w0_s, n_w0_s, z_w_s, n_w_s, z_v_s, n_v_s) = match ftrl_state.as_mut() {
+        Some(t) => (
+            t.0.as_slice_mut()?, t.1.as_slice_mut()?, t.2.as_slice_mut()?,
+            t.3.as_slice_mut()?, t.4.as_slice_mut()?, t.5.as_slice_mut()?,
+        ),
+        None => (
+            lz_w0.as_mut_slice(), ln_w0.as_mut_slice(), lz_w.as_mut_slice(),
+            ln_w.as_mut_slice(), lz_v.as_mut_slice(), ln_v.as_mut_slice(),
+        ),
+    };
+    if ext_state
+        && (acc_w0_s.len() != n_classes
+            || acc_w_s.len() != n_classes * n_features
+            || acc_v_s.len() != n_classes * v_len)
+    {
+        return Err(val_err("state shapes must match (w0, w, V)".to_string()));
+    }
+    if ext_adam
+        && (m_w0_s.len() != n_classes || s_w0_s.len() != n_classes || t_w0_s.len() != n_classes
+            || m_w_s.len() != n_classes * n_features || s_w_s.len() != n_classes * n_features
+            || t_w_s.len() != n_classes * n_features
+            || m_v_s.len() != n_classes * v_len || s_v_s.len() != n_classes * v_len
+            || t_v_s.len() != n_classes * v_len)
+    {
+        return Err(val_err("adam_state shapes must match (w0, w, V)".to_string()));
+    }
+    if ext_ftrl
+        && (z_w0_s.len() != n_classes || n_w0_s.len() != n_classes
+            || z_w_s.len() != n_classes * n_features || n_w_s.len() != n_classes * n_features
+            || z_v_s.len() != n_classes * v_len || n_v_s.len() != n_classes * v_len)
+    {
+        return Err(val_err("ftrl_state shapes must match (w0, w, V)".to_string()));
+    }
+    let st = McState {
+        acc_w0: acc_w0_s, acc_w: acc_w_s, acc_v: acc_v_s,
+        m_w0: m_w0_s, s_w0: s_w0_s, t_w0: t_w0_s,
+        m_w: m_w_s, s_w: s_w_s, t_w: t_w_s,
+        m_v: m_v_s, s_v: s_v_s, t_v: t_v_s,
+        z_w0: z_w0_s, n_w0: n_w0_s,
+        z_w: z_w_s, n_w: n_w_s, z_v: z_v_s, n_v: n_v_s,
+    };
     let out = py.allow_threads(|| -> Result<(), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args_mc(&csr, y_s, n_classes, sw_s, &ro_shape, ro)?;
         fm::fit_multiclass_csr(
-            &csr, y_s, sw_s, w0_s, w_s, v_s, n_classes, n_features, k, opt, learning_rate,
+            &csr, y_s, sw_s, w0_s, w_s, v_s, st, n_classes, n_features, k, opt, learning_rate,
             l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing, ro_shape[1], batch_size,
             ro,
         );
@@ -354,9 +573,16 @@ fn fm_fit_multiclass_csr<'py>(
     out.map_err(val_err)
 }
 
-/// Train an FFM (squared or logistic loss) in place (w, v mutated; new w0 returned).
-/// batch_size=1, single-threaded; see ffm::fit_csr.
+/// Train an FFM (squared or logistic loss) in place (w, v, acc_*, adam/ftrl
+/// arrays mutated; new (w0, acc_w0, adam scalars, ftrl scalars) returned, like
+/// fm_fit_csr). See ffm::fit_csr.
 #[pyfunction]
+#[pyo3(signature = (
+    indptr, indices, data, n_features, y, sample_weight, field_ids, w0, acc_w0, w, v,
+    acc_w, acc_v, loss, optimizer, learning_rate, l2_linear, l2_factors, beta_1, beta_2,
+    epsilon, row_orders, batch_size, n_jobs, l1_linear, l1_factors, ftrl_beta,
+    adam_state=None, ftrl_state=None,
+))]
 #[allow(clippy::too_many_arguments)]
 fn ffm_fit_csr<'py>(
     py: Python<'py>,
@@ -387,7 +613,9 @@ fn ffm_fit_csr<'py>(
     l1_linear: f64,
     l1_factors: f64,
     ftrl_beta: f64,
-) -> PyResult<(f64, f64)> {
+    mut adam_state: Option<FfmAdamArg<'py>>,
+    mut ftrl_state: Option<FfmFtrlArg<'py>>,
+) -> PyResult<FitScalars> {
     let loss = parse_loss(loss)?;
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
     if batch_size == 0 {
@@ -414,6 +642,68 @@ fn ffm_fit_csr<'py>(
     if acc_w_s.len() != w_s.len() || acc_v_s.len() != v_s.len() {
         return Err(val_err("accumulator shapes must match w and V".to_string()));
     }
+    let v_len = v_s.len();
+    let adam_on = matches!(opt, Optimizer::Adam { .. });
+    let ftrl_on = matches!(opt, Optimizer::Ftrl { .. });
+    if adam_state.is_some() && !adam_on {
+        return Err(val_err("adam_state is only valid for optimizer='adam'".to_string()));
+    }
+    if ftrl_state.is_some() && !ftrl_on {
+        return Err(val_err("ftrl_state is only valid for optimizer='ftrl'".to_string()));
+    }
+    let (mut m_w0, mut s_w0, mut t_w0) =
+        adam_state.as_ref().map_or((0.0, 0.0, 0.0), |t| (t.0, t.1, t.2));
+    let (mut z_w0, mut n_w0) = ftrl_state.as_ref().map_or((0.0, 0.0), |t| (t.0, t.1));
+    let ext_adam = adam_state.is_some();
+    let ext_ftrl = ftrl_state.is_some();
+    let need_adam = adam_on && !ext_adam;
+    let need_ftrl = ftrl_on && !ext_ftrl;
+    let (mut lm_w, mut ls_w, mut lt_w) = (
+        local_state(need_adam, n_features),
+        local_state(need_adam, n_features),
+        local_state(need_adam, n_features),
+    );
+    let (mut lm_v, mut ls_v, mut lt_v) = (
+        local_state(need_adam, v_len),
+        local_state(need_adam, v_len),
+        local_state(need_adam, v_len),
+    );
+    let (mut lz_w, mut ln_w) = (local_state(need_ftrl, n_features), local_state(need_ftrl, n_features));
+    let (mut lz_v, mut ln_v) = (local_state(need_ftrl, v_len), local_state(need_ftrl, v_len));
+    let (m_w_s, s_w_s, t_w_s, m_v_s, s_v_s, t_v_s) = match adam_state.as_mut() {
+        Some(t) => (
+            t.3.as_slice_mut()?, t.4.as_slice_mut()?, t.5.as_slice_mut()?,
+            t.6.as_slice_mut()?, t.7.as_slice_mut()?, t.8.as_slice_mut()?,
+        ),
+        None => (
+            lm_w.as_mut_slice(), ls_w.as_mut_slice(), lt_w.as_mut_slice(),
+            lm_v.as_mut_slice(), ls_v.as_mut_slice(), lt_v.as_mut_slice(),
+        ),
+    };
+    let (z_w_s, n_w_s, z_v_s, n_v_s) = match ftrl_state.as_mut() {
+        Some(t) => (t.2.as_slice_mut()?, t.3.as_slice_mut()?, t.4.as_slice_mut()?, t.5.as_slice_mut()?),
+        None => (lz_w.as_mut_slice(), ln_w.as_mut_slice(), lz_v.as_mut_slice(), ln_v.as_mut_slice()),
+    };
+    if ext_adam
+        && (m_w_s.len() != n_features || s_w_s.len() != n_features || t_w_s.len() != n_features
+            || m_v_s.len() != v_len || s_v_s.len() != v_len || t_v_s.len() != v_len)
+    {
+        return Err(val_err("adam_state shapes must match w and V".to_string()));
+    }
+    if ext_ftrl
+        && (z_w_s.len() != n_features || n_w_s.len() != n_features
+            || z_v_s.len() != v_len || n_v_s.len() != v_len)
+    {
+        return Err(val_err("ftrl_state shapes must match w and V".to_string()));
+    }
+    let adam_view = AdamStateMut {
+        m_w0: &mut m_w0, s_w0: &mut s_w0, t_w0: &mut t_w0,
+        m_w: m_w_s, s_w: s_w_s, t_w: t_w_s, m_v: m_v_s, s_v: s_v_s, t_v: t_v_s,
+    };
+    let ftrl_view = FtrlStateMut {
+        z_w0: &mut z_w0, n_w0: &mut n_w0,
+        z_w: z_w_s, n_w: n_w_s, z_v: z_v_s, n_v: n_v_s,
+    };
     let out = py.allow_threads(|| -> Result<(f64, f64), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args(&csr, y_s, sw_s, &ro_shape, ro)?;
@@ -421,18 +711,27 @@ fn ffm_fit_csr<'py>(
         let mut acc_w0 = acc_w0;
         ffm::fit_csr(
             &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s,
+            adam_view, ftrl_view,
             n_fields, k, loss, opt, learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
             ro_shape[1], batch_size, n_jobs.max(1), ro,
         );
         Ok((w0, acc_w0))
     });
-    out.map_err(val_err)
+    let (w0, acc_w0) = out.map_err(val_err)?;
+    Ok((w0, acc_w0, (m_w0, s_w0, t_w0), (z_w0, n_w0)))
 }
 
 /// Train a multiclass (softmax) FFM in place; w0 (C,), w (C, n_features) and
 /// v (C, n_features, n_fields, k) are all mutated. `y` holds class indices in
-/// [0, C). Serial (no n_jobs); see ffm::fit_multiclass_csr.
+/// [0, C). `state` / `adam_state` / `ftrl_state` behave as in
+/// fm_fit_multiclass_csr. Serial (no n_jobs); see ffm::fit_multiclass_csr.
 #[pyfunction]
+#[pyo3(signature = (
+    indptr, indices, data, n_features, y, sample_weight, field_ids, w0, w, v,
+    optimizer, learning_rate, l2_linear, l2_factors, label_smoothing, beta_1, beta_2,
+    epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
+    state=None, adam_state=None, ftrl_state=None,
+))]
 #[allow(clippy::too_many_arguments)]
 fn ffm_fit_multiclass_csr<'py>(
     py: Python<'py>,
@@ -459,6 +758,9 @@ fn ffm_fit_multiclass_csr<'py>(
     l1_linear: f64,
     l1_factors: f64,
     ftrl_beta: f64,
+    mut state: Option<FfmMcStateArg<'py>>,
+    mut adam_state: Option<FfmMcAdamArg<'py>>,
+    mut ftrl_state: Option<FfmMcFtrlArg<'py>>,
 ) -> PyResult<()> {
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
     if batch_size == 0 {
@@ -483,12 +785,108 @@ fn ffm_fit_multiclass_csr<'py>(
         )));
     }
     data::check_field_ids(field_ids_s, n_features, n_fields).map_err(val_err)?;
+    let v_len = n_features * n_fields * k; // per-class factor entries
+    let adam_on = matches!(opt, Optimizer::Adam { .. });
+    let ftrl_on = matches!(opt, Optimizer::Ftrl { .. });
+    if adam_state.is_some() && !adam_on {
+        return Err(val_err("adam_state is only valid for optimizer='adam'".to_string()));
+    }
+    if ftrl_state.is_some() && !ftrl_on {
+        return Err(val_err("ftrl_state is only valid for optimizer='ftrl'".to_string()));
+    }
+    let (ext_state, ext_adam, ext_ftrl) = (state.is_some(), adam_state.is_some(), ftrl_state.is_some());
+    let (need_adam, need_ftrl) = (adam_on && !ext_adam, ftrl_on && !ext_ftrl);
+    let mut lacc_w0 = local_state(!ext_state, n_classes);
+    let mut lacc_w = local_state(!ext_state, n_classes * n_features);
+    let mut lacc_v = local_state(!ext_state, n_classes * v_len);
+    let (mut lm_w0, mut ls_w0, mut lt_w0) = (
+        local_state(!ext_adam, n_classes),
+        local_state(!ext_adam, n_classes),
+        local_state(!ext_adam, n_classes),
+    );
+    let (mut lm_w, mut ls_w, mut lt_w) = (
+        local_state(need_adam, n_classes * n_features),
+        local_state(need_adam, n_classes * n_features),
+        local_state(need_adam, n_classes * n_features),
+    );
+    let (mut lm_v, mut ls_v, mut lt_v) = (
+        local_state(need_adam, n_classes * v_len),
+        local_state(need_adam, n_classes * v_len),
+        local_state(need_adam, n_classes * v_len),
+    );
+    let (mut lz_w0, mut ln_w0) = (local_state(!ext_ftrl, n_classes), local_state(!ext_ftrl, n_classes));
+    let (mut lz_w, mut ln_w) = (
+        local_state(need_ftrl, n_classes * n_features),
+        local_state(need_ftrl, n_classes * n_features),
+    );
+    let (mut lz_v, mut ln_v) = (
+        local_state(need_ftrl, n_classes * v_len),
+        local_state(need_ftrl, n_classes * v_len),
+    );
+    let (acc_w0_s, acc_w_s, acc_v_s) = match state.as_mut() {
+        Some(t) => (t.0.as_slice_mut()?, t.1.as_slice_mut()?, t.2.as_slice_mut()?),
+        None => (lacc_w0.as_mut_slice(), lacc_w.as_mut_slice(), lacc_v.as_mut_slice()),
+    };
+    let (m_w0_s, s_w0_s, t_w0_s, m_w_s, s_w_s, t_w_s, m_v_s, s_v_s, t_v_s) =
+        match adam_state.as_mut() {
+            Some(t) => (
+                t.0.as_slice_mut()?, t.1.as_slice_mut()?, t.2.as_slice_mut()?,
+                t.3.as_slice_mut()?, t.4.as_slice_mut()?, t.5.as_slice_mut()?,
+                t.6.as_slice_mut()?, t.7.as_slice_mut()?, t.8.as_slice_mut()?,
+            ),
+            None => (
+                lm_w0.as_mut_slice(), ls_w0.as_mut_slice(), lt_w0.as_mut_slice(),
+                lm_w.as_mut_slice(), ls_w.as_mut_slice(), lt_w.as_mut_slice(),
+                lm_v.as_mut_slice(), ls_v.as_mut_slice(), lt_v.as_mut_slice(),
+            ),
+        };
+    let (z_w0_s, n_w0_s, z_w_s, n_w_s, z_v_s, n_v_s) = match ftrl_state.as_mut() {
+        Some(t) => (
+            t.0.as_slice_mut()?, t.1.as_slice_mut()?, t.2.as_slice_mut()?,
+            t.3.as_slice_mut()?, t.4.as_slice_mut()?, t.5.as_slice_mut()?,
+        ),
+        None => (
+            lz_w0.as_mut_slice(), ln_w0.as_mut_slice(), lz_w.as_mut_slice(),
+            ln_w.as_mut_slice(), lz_v.as_mut_slice(), ln_v.as_mut_slice(),
+        ),
+    };
+    if ext_state
+        && (acc_w0_s.len() != n_classes
+            || acc_w_s.len() != n_classes * n_features
+            || acc_v_s.len() != n_classes * v_len)
+    {
+        return Err(val_err("state shapes must match (w0, w, V)".to_string()));
+    }
+    if ext_adam
+        && (m_w0_s.len() != n_classes || s_w0_s.len() != n_classes || t_w0_s.len() != n_classes
+            || m_w_s.len() != n_classes * n_features || s_w_s.len() != n_classes * n_features
+            || t_w_s.len() != n_classes * n_features
+            || m_v_s.len() != n_classes * v_len || s_v_s.len() != n_classes * v_len
+            || t_v_s.len() != n_classes * v_len)
+    {
+        return Err(val_err("adam_state shapes must match (w0, w, V)".to_string()));
+    }
+    if ext_ftrl
+        && (z_w0_s.len() != n_classes || n_w0_s.len() != n_classes
+            || z_w_s.len() != n_classes * n_features || n_w_s.len() != n_classes * n_features
+            || z_v_s.len() != n_classes * v_len || n_v_s.len() != n_classes * v_len)
+    {
+        return Err(val_err("ftrl_state shapes must match (w0, w, V)".to_string()));
+    }
+    let st = McState {
+        acc_w0: acc_w0_s, acc_w: acc_w_s, acc_v: acc_v_s,
+        m_w0: m_w0_s, s_w0: s_w0_s, t_w0: t_w0_s,
+        m_w: m_w_s, s_w: s_w_s, t_w: t_w_s,
+        m_v: m_v_s, s_v: s_v_s, t_v: t_v_s,
+        z_w0: z_w0_s, n_w0: n_w0_s,
+        z_w: z_w_s, n_w: n_w_s, z_v: z_v_s, n_v: n_v_s,
+    };
     let out = py.allow_threads(|| -> Result<(), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args_mc(&csr, y_s, n_classes, sw_s, &ro_shape, ro)?;
         ffm::fit_multiclass_csr(
-            &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, n_classes, n_features, n_fields, k, opt,
-            learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing,
+            &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, st, n_classes, n_features, n_fields, k,
+            opt, learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing,
             ro_shape[1], batch_size, ro,
         );
         Ok(())

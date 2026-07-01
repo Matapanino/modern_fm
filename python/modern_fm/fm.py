@@ -12,8 +12,9 @@ Optimizers: SGD, AdaGrad, Adam ("adam", with beta_1/beta_2/epsilon), and
 FTRL-Proximal ("ftrl", with l1_linear/l1_factors/ftrl_beta; L1 yields exact zeros).
 
 Early stopping supports every optimizer (SGD/AdaGrad/Adam/FTRL) and works with
-multiclass; the Adam, FTRL, and multiclass state hand-offs round-trip through the
-NumPy reference path. See docs/roadmap.md.
+multiclass; every per-epoch optimizer-state hand-off (AdaGrad accumulators,
+Adam moments, FTRL (z, n), per-class multiclass state) round-trips through the
+Rust kernel. See docs/roadmap.md.
 """
 
 from __future__ import annotations
@@ -247,8 +248,8 @@ class _FMBase(BaseEstimator, ModelIOMixin):
             init, opt = resumed
         row_orders = make_row_orders(rng, n_tr, self.max_iter)
         # AdaGrad/SGD round-trip accumulators via `state`; Adam and FTRL round-trip
-        # their state (moments / (z, n)) via `adam_state` / `ftrl_state`, which route
-        # through the NumPy reference path. warm_start resumes the persisted state.
+        # their state (moments / (z, n)) via `adam_state` / `ftrl_state` — all
+        # through the Rust kernel. warm_start resumes the persisted state.
         is_adam = self.optimizer == "adam"
         is_ftrl = self.optimizer == "ftrl"
         if opt is not None:
@@ -301,8 +302,8 @@ class _FMBase(BaseEstimator, ModelIOMixin):
     def _advance_one_epoch(self, X, y, loss, sample_weight, *, multiclass, first_call, n_classes):
         """One natural-order pass continuing ``self._opt_state`` (the partial_fit
         primitive). Inits params + optimizer state on the first call; writes back
-        w0_/w_/V_ in ``dtype`` and bumps n_iter_. Adam/FTRL/multiclass ride the
-        NumPy reference path; binary sgd/adagrad reuse the Rust ``state`` round-trip."""
+        w0_/w_/V_ in ``dtype`` and bumps n_iter_. Every optimizer's state
+        (including Adam/FTRL and multiclass) round-trips through the Rust kernel."""
         n_rows, n_features = X.shape
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
         if first_call:
@@ -524,8 +525,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
 
     def _fit_multiclass_es(self, X, y, sample_weight, eval_val):
         """Epoch-by-epoch multiclass fit with early stopping (softmax cross-entropy
-        metric). The Rust multiclass kernel keeps its state internal, so the
-        per-epoch optimizer-state hand-off runs on the NumPy reference path."""
+        metric); the per-class optimizer state round-trips through the Rust kernel."""
         n_rows, n_features = X.shape
         n_classes = self.classes_.shape[0]
         if not 0.0 <= self.label_smoothing < 1.0:
