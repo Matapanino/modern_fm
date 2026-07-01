@@ -124,15 +124,18 @@ groundwork (kernels land separately, gated on real-GPU validation — see
     `n_jobs` for FwFM deferred). (AFM/FEFM/FmFM follow this template post-1.0;
     FmFM is the research-recommended next variant — one field-pair k×k matrix
     generalizes FM/FwFM/FvFM/FmFM.)
-- [ ] **Bi-interaction pooling (`BiInteractionPooling`)** — the honest
+- [x] **Bi-interaction pooling (`BiInteractionPooling`)** — the honest
   "nfm_pooling": a sklearn transformer emitting the k-dim bi-interaction
   vector `0.5 * ((sum_i x_i v_i)^2 - sum_i (x_i v_i)^2)` from a fitted FM for
   downstream models. As a *predictor* a linear head over this provably
   collapses to plain FM (NFM = this + MLP, out of scope), so it ships as a
   feature transform, not a model. _Priority: P1._
-  - DoD: `_reference.fm_bi_interaction` (+ `_backend` wrapper), transformer
-    with `fit`/`transform`/`get_feature_names_out`, collapse-to-FM property
-    test at 1e-12, Pipeline integration test, `check_estimator`, docs.
+  - DoD met: `_reference.fm_bi_interaction` (+ `_backend.fm_bi_interaction`
+    wrapper; no Rust kernel — NumPy is two BLAS-grade sparse matmuls),
+    `BiInteractionPooling` with `fit`/`transform`/`get_feature_names_out`
+    (+ `bi_interaction(X)` on the FM estimators), collapse-to-FM identity
+    test at 1e-12, Pipeline + `check_estimator` + pickle tests, api_design
+    docs.
 - [ ] **CUDA plumbing (no kernels)** — `cuda-backend` Cargo feature (cudarc,
   dynamic loading), `_backend.has_cuda()`, `backend="cuda"` accepted with
   clear errors when unavailable, CI `cargo check --features cuda-backend`

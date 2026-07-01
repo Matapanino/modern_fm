@@ -111,6 +111,33 @@ extra learned attribute `r_` — `(n_fields, n_fields)` binary,
 `(n_classes, n_fields, n_fields)` multiclass — regularized by
 `l2_factors` / `l1_factors`.
 
+## BiInteractionPooling (feature transform)
+
+Bi-interaction pooling (He & Chua, SIGIR 2017) as an sklearn transformer — the
+k-dim FM pairwise vector before its factor-sum, for downstream models. As a
+*predictor* a linear head over it provably collapses to plain FM (NFM = this +
+an MLP, which is out of scope), so it ships as a transform, not a model.
+
+```python
+from modern_fm import BiInteractionPooling, FMRegressor
+from sklearn.pipeline import make_pipeline
+from sklearn.linear_model import LogisticRegression
+
+pipe = make_pipeline(
+    BiInteractionPooling(FMRegressor(n_factors=8, random_state=0)),
+    LogisticRegression(),
+).fit(X, y)
+```
+
+- `BiInteractionPooling(estimator=None)` clones and fits the given FM
+  (`None` -> `FMRegressor(n_factors=8)`); `transform(X)` returns
+  `(n_samples, n_factors)` pooled features (multiclass inner FMs pool per
+  class, concatenated to `(n_samples, n_classes * n_factors)`);
+  `get_feature_names_out()` follows the sklearn convention.
+- The fitted FM estimators expose the same features directly via
+  `model.bi_interaction(X)` (deliberately **not** named `transform`, so plain
+  FMs keep plain-estimator semantics in sklearn tooling).
+
 ## Partial fit / warm start (incremental & streaming training)
 
 All five estimators support incremental training:

@@ -6,6 +6,13 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **`BiInteractionPooling`** — bi-interaction pooling (He & Chua, SIGIR 2017)
+  as an sklearn transformer: fits an FM and emits the k-dim second-order
+  interaction vector `0.5 * ((Σᵢxᵢvᵢ)² − Σᵢ(xᵢvᵢ)²)` for downstream models
+  (multiclass inner FMs pool per class, concatenated). Shipped as a feature
+  transform because a linear head over it provably collapses to plain FM
+  (identity pinned at 1e-12); the FM estimators also expose
+  `bi_interaction(X)` directly. `check_estimator`-clean, Pipeline-tested.
 - **`FwFMClassifier`** — Field-weighted Factorization Machine (Pan et al.,
   WWW 2018; `docs/math_spec_fwfm.md`): FM-shaped factors plus one learned
   scalar weight per field pair (`r_`, upper triangle used) scaling each

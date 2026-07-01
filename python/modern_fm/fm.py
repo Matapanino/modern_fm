@@ -299,6 +299,20 @@ class _FMBase(BaseEstimator, ModelIOMixin):
         X = _validate_X(self, X, reset=False)
         return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_)
 
+    def bi_interaction(self, X):
+        """Bi-interaction pooled features from the fitted factors: the k-dim
+        FM pairwise term before its factor-sum (see modern_fm.pooling).
+        Returns (n_samples, n_factors), or (n_samples, n_classes * n_factors)
+        for a multiclass classifier. Deliberately not named ``transform`` —
+        use ``BiInteractionPooling`` as a Pipeline step."""
+        check_is_fitted(self)
+        X = _validate_X(self, X, reset=False)
+        if self.V_.ndim == 3:  # multiclass: per-class pooling, concatenated
+            return np.hstack(
+                [_backend.fm_bi_interaction(X, self.V_[c]) for c in range(self.V_.shape[0])]
+            )
+        return _backend.fm_bi_interaction(X, self.V_)
+
     def _advance_one_epoch(self, X, y, loss, sample_weight, *, multiclass, first_call, n_classes):
         """One natural-order pass continuing ``self._opt_state`` (the partial_fit
         primitive). Inits params + optimizer state on the first call; writes back

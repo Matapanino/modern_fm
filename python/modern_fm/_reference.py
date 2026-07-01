@@ -162,3 +162,26 @@ def fwfm_predict(X, field_ids, w0, w, V, r):
             s += np.triu(G, k=1).sum()
         out[row] = s
     return out
+
+
+def fm_bi_interaction(X, V):
+    """Bi-interaction pooling (He & Chua, SIGIR 2017): the k-dim vector of the
+    FM pairwise term before its factor-sum,
+
+        f_BI(x)_f = 0.5 * [(sum_i v_{i,f} x_i)^2 - sum_i v_{i,f}^2 x_i^2]
+
+    so `fm_predict_fast(X, w0, w, V) == w0 + X @ w + fm_bi_interaction(X, V).sum(axis=1)`
+    exactly. Returns (n_samples, k). Dense or CSR input, O(nnz * k), no
+    parameters beyond V — used as a feature transform (a linear head over it
+    provably collapses to plain FM; see BiInteractionPooling).
+    """
+    V = np.asarray(V, dtype=np.float64)
+    if sp.issparse(X):
+        X = X.tocsr().astype(np.float64)
+        xv = X @ V
+        x2v2 = np.asarray((X.multiply(X)) @ (V**2))
+    else:
+        X = np.asarray(X, dtype=np.float64)
+        xv = X @ V
+        x2v2 = (X**2) @ (V**2)
+    return 0.5 * (xv**2 - x2v2)
