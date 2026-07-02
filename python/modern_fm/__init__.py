@@ -8,7 +8,7 @@ from .libffm import dump_libffm, load_libffm
 from .pooling import BiInteractionPooling
 from .preprocessing import CategoricalEncoder
 
-__version__ = "0.5.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "FMClassifier",
