@@ -3,6 +3,16 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-07-02
+
+### Fixed
+- `modern_fm.__version__` (frozen public API) shipped as `"1.0.0"` in the
+  1.1.0 wheels — the hardcoded string in `__init__.py` was missed by the
+  release bump while the distribution metadata was correct. Now `"1.1.1"`,
+  with a new test pinning `__version__` to
+  `importlib.metadata.version("modern-fm")` so CI catches any future
+  mismatch. No functional changes.
+
 ## [1.1.0] - 2026-07-02
 
 Full CUDA coverage + CUDA-ready Linux wheels. Additive minor under
