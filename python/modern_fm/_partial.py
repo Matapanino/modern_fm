@@ -16,7 +16,12 @@ import numpy as np
 from sklearn.utils.multiclass import _check_partial_fit_first_call
 from sklearn.utils.validation import column_or_1d
 
-from ._reference_train import new_adam_state, new_ftrl_state
+from ._reference_train import (
+    new_adam_state,
+    new_adam_state_fwfm,
+    new_ftrl_state,
+    new_ftrl_state_fwfm,
+)
 
 
 def make_opt_state(optimizer, w0, w, V):
@@ -34,6 +39,17 @@ def make_opt_state(optimizer, w0, w, V):
         return {"ftrl_state": new_ftrl_state(w0, w, V)}
     z = np.zeros_like
     return {"state": [z(w0), z(w), z(V)]}  # sgd ignores these (harmless no-op round-trip)
+
+
+def make_opt_state_fwfm(optimizer, w0, w, V, R):
+    """`make_opt_state` for FwFM's four parameter groups (w0, w, V, R) —
+    layouts per docs/math_spec_fwfm.md."""
+    if optimizer == "adam":
+        return {"adam_state": new_adam_state_fwfm(w0, w, V, R)}
+    if optimizer == "ftrl":
+        return {"ftrl_state": new_ftrl_state_fwfm(w0, w, V, R)}
+    z = np.zeros_like
+    return {"state": [z(w0), z(w), z(V), z(R)]}
 
 
 def partial_fit_classes(estimator, y, classes):
@@ -68,5 +84,22 @@ def warm_resume(estimator):
             opt = make_opt_state(estimator.optimizer, w0, w, V)
         estimator._opt_state = opt
         return (w0, w, V), opt
+    estimator._opt_state = None
+    return None
+
+
+def warm_resume_fwfm(estimator):
+    """`warm_resume` for FwFM estimators (four parameter groups incl. `r_`)."""
+    if estimator.warm_start and hasattr(estimator, "w0_"):
+        multiclass = np.ndim(estimator.w0_) > 0
+        w0 = estimator.w0_.astype(np.float64) if multiclass else float(estimator.w0_)
+        w = estimator.w_.astype(np.float64)
+        V = estimator.V_.astype(np.float64)
+        R = estimator.r_.astype(np.float64)
+        opt = getattr(estimator, "_opt_state", None)
+        if opt is None:
+            opt = make_opt_state_fwfm(estimator.optimizer, w0, w, V, R)
+        estimator._opt_state = opt
+        return (w0, w, V, R), opt
     estimator._opt_state = None
     return None

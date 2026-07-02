@@ -884,3 +884,379 @@ def ffm_train(
         beta_2=beta_2,
         epsilon=epsilon,
     )
+
+
+def init_fwfm_params(rng, n_features, n_fields, n_factors, init_scale):
+    """FwFM params (docs/math_spec_fwfm.md): w0 = 0, w = 0,
+    V ~ Normal(0, init_scale) (FM-style), R = ones (upper triangle used) —
+    so the initial model is exactly a plain FM."""
+    w0 = 0.0
+    w = np.zeros(n_features)
+    V = rng.normal(0.0, init_scale, size=(n_features, n_factors))
+    R = np.ones((n_fields, n_fields))
+    return w0, w, V, R
+
+
+def init_fwfm_multiclass_params(rng, n_classes, n_features, n_fields, n_factors, init_scale):
+    """Per-class FwFM params: w0 (C,), w (C, n), V (C, n, k), R (C, F, F)."""
+    w0 = np.zeros(n_classes)
+    w = np.zeros((n_classes, n_features))
+    V = rng.normal(0.0, init_scale, size=(n_classes, n_features, n_factors))
+    R = np.ones((n_classes, n_fields, n_fields))
+    return w0, w, V, R
+
+
+def new_adam_state_fwfm(w0, w, V, R):
+    """Fresh Adam moment state for FwFM's four parameter groups
+    [.. w0 .., .. w .., .. V .., m_R, v_R, t_R] — `new_adam_state` plus an
+    appended R group (docs/math_spec_fwfm.md)."""
+    z = np.zeros_like
+    return new_adam_state(w0, w, V) + [z(R), z(R), z(R)]
+
+
+def new_ftrl_state_fwfm(w0, w, V, R):
+    """Fresh FTRL (z, n) state for FwFM's four parameter groups —
+    `new_ftrl_state` plus an appended R group."""
+    z = np.zeros_like
+    return new_ftrl_state(w0, w, V) + [z(R), z(R)]
+
+
+def fwfm_fit_reference(
+    X,
+    y,
+    field_ids,
+    params,
+    *,
+    loss="logistic",
+    optimizer="adagrad",
+    learning_rate=0.05,
+    l2_linear=0.0,
+    l2_factors=0.0,
+    l1_linear=0.0,
+    l1_factors=0.0,
+    row_orders=None,
+    sample_weight=None,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-8,
+    ftrl_beta=1.0,
+    batch_size=1,
+    state=None,
+    adam_state=None,
+    ftrl_state=None,
+):
+    """Train an FwFM from `params` = (w0, w, V, R); returns copies.
+
+    docs/math_spec_fwfm.md: score/gradients via the explicit a-ascending /
+    b-ascending pair loop; per-batch accumulation with one update per touched
+    coordinate — w0, w and V over touched features (as in FM), R over touched
+    field pairs (upper triangle, (a, b) ascending); R is regularized with
+    l2_factors / l1_factors. `state` = [acc_w0, acc_w, acc_V, acc_R];
+    `adam_state` / `ftrl_state` follow `new_adam_state_fwfm` /
+    `new_ftrl_state_fwfm`.
+    """
+    _check_loss_optimizer(loss, optimizer)
+    field_ids = np.asarray(field_ids, dtype=np.int64)
+    w0, w, V, R = params
+    w0 = float(w0)
+    w = np.array(w, dtype=np.float64, copy=True)
+    V = np.array(V, dtype=np.float64, copy=True)
+    R = np.array(R, dtype=np.float64, copy=True)
+    y = np.asarray(y, dtype=np.float64)
+    n_fields = R.shape[0]
+    rows = list(_as_dense_rows(X))
+    sw = (
+        np.ones(len(rows))
+        if sample_weight is None
+        else np.asarray(sample_weight, dtype=np.float64)
+    )
+    if row_orders is None:
+        row_orders = np.arange(len(rows))[None, :]
+    logistic = loss == "logistic"
+    adagrad = optimizer == "adagrad"
+    adam = optimizer == "adam"
+    ftrl = optimizer == "ftrl"
+    if adam_state is not None and not adam:
+        raise ValueError("adam_state is only valid for optimizer='adam'")
+    if ftrl_state is not None and not ftrl:
+        raise ValueError("ftrl_state is only valid for optimizer='ftrl'")
+    lr = learning_rate
+    if state is None:
+        a_w0, a_w, a_V, a_R = 0.0, np.zeros_like(w), np.zeros_like(V), np.zeros_like(R)
+    else:
+        a_w0, a_w, a_V, a_R = state
+    if adam and adam_state is None:
+        m_w0, v_w0, t_w0 = 0.0, 0.0, 0.0
+        m_w, v_w, t_w = np.zeros_like(w), np.zeros_like(w), np.zeros_like(w)
+        m_V, v_V, t_V = np.zeros_like(V), np.zeros_like(V), np.zeros_like(V)
+        m_R, v_R, t_R = np.zeros_like(R), np.zeros_like(R), np.zeros_like(R)
+    elif adam:
+        m_w0, v_w0, t_w0 = adam_state[0], adam_state[1], adam_state[2]
+        m_w, v_w, t_w = adam_state[3], adam_state[4], adam_state[5]
+        m_V, v_V, t_V = adam_state[6], adam_state[7], adam_state[8]
+        m_R, v_R, t_R = adam_state[9], adam_state[10], adam_state[11]
+    if ftrl and ftrl_state is None:
+        z_w0, n_w0 = 0.0, 0.0
+        z_w, n_w = np.zeros_like(w), np.zeros_like(w)
+        z_V, n_V = np.zeros_like(V), np.zeros_like(V)
+        z_R, n_R = np.zeros_like(R), np.zeros_like(R)
+    elif ftrl:
+        z_w0, n_w0 = ftrl_state[0], ftrl_state[1]
+        z_w, n_w = ftrl_state[2], ftrl_state[3]
+        z_V, n_V = ftrl_state[4], ftrl_state[5]
+        z_R, n_R = ftrl_state[6], ftrl_state[7]
+    for order in np.asarray(row_orders):
+        for batch in _iter_batches(order, batch_size):
+            bsz = len(batch)
+            # pass 1: per-row data-gradients from the frozen (batch-start) params
+            g_w0 = 0.0
+            gw = np.zeros_like(w)
+            gV = np.zeros_like(V)
+            gR = np.zeros_like(R)
+            tpair = np.zeros((n_fields, n_fields), dtype=bool)  # touched (a<=b) pairs
+            for rr in batch:
+                idx, val = rows[rr]
+                z = len(idx)
+                f = field_ids[idx]
+                s = w0 + w[idx] @ val
+                for a in range(z):
+                    for b in range(a + 1, z):
+                        pa, pb = min(f[a], f[b]), max(f[a], f[b])
+                        s += R[pa, pb] * (V[idx[a]] @ V[idx[b]]) * val[a] * val[b]
+                g = ((_sigmoid(s) - y[rr]) if logistic else (s - y[rr])) * sw[rr]
+                g_w0 += g
+                gw[idx] += g * val
+                for a in range(z):
+                    for b in range(a + 1, z):
+                        pa, pb = min(f[a], f[b]), max(f[a], f[b])
+                        coef = g * val[a] * val[b]
+                        gV[idx[a]] += coef * R[pa, pb] * V[idx[b]]
+                        gV[idx[b]] += coef * R[pa, pb] * V[idx[a]]
+                        gR[pa, pb] += coef * (V[idx[a]] @ V[idx[b]])
+                        tpair[pa, pb] = True
+            # pass 2: w0, w, V over touched features, then R over touched pairs
+            tch = _touched(batch, rows)
+            prs = np.argwhere(tpair)  # (a, b) ascending row-major
+            g0 = g_w0 / bsz
+            if ftrl:
+                w0, z_w0, n_w0 = _ftrl_scalar(w0, g0, z_w0, n_w0, lr, ftrl_beta, 0.0, 0.0)
+                _ftrl_array(w, gw[tch] / bsz, z_w, n_w, tch, lr, ftrl_beta, l1_linear, l2_linear)
+                _ftrl_array(V, gV[tch] / bsz, z_V, n_V, tch, lr, ftrl_beta, l1_factors, l2_factors)
+                for pa, pb in prs:
+                    _ftrl_array(R, gR[pa, pb] / bsz, z_R, n_R, (pa, pb), lr, ftrl_beta,
+                                l1_factors, l2_factors)
+                continue
+            g_w = gw[tch] / bsz + l2_linear * w[tch]
+            g_V = gV[tch] / bsz + l2_factors * V[tch]
+            Vt = V[tch]
+            if adagrad:
+                a_w0 += g0 * g0
+                w0 -= lr * g0 / math.sqrt(a_w0 + ADAGRAD_EPS)
+                a_w[tch] += g_w**2
+                w[tch] -= lr * g_w / np.sqrt(a_w[tch] + ADAGRAD_EPS)
+                a_V[tch] += g_V**2
+                V[tch] = Vt - lr * g_V / np.sqrt(a_V[tch] + ADAGRAD_EPS)
+                for pa, pb in prs:
+                    grad = gR[pa, pb] / bsz + l2_factors * R[pa, pb]
+                    a_R[pa, pb] += grad * grad
+                    R[pa, pb] -= lr * grad / math.sqrt(a_R[pa, pb] + ADAGRAD_EPS)
+            elif adam:
+                w0, m_w0, v_w0, t_w0 = _adam_scalar(
+                    w0, g0, m_w0, v_w0, t_w0, lr, beta_1, beta_2, epsilon
+                )
+                _adam_array(w, g_w, m_w, v_w, t_w, tch, lr, beta_1, beta_2, epsilon)
+                _adam_array(V, g_V, m_V, v_V, t_V, tch, lr, beta_1, beta_2, epsilon)
+                for pa, pb in prs:
+                    grad = gR[pa, pb] / bsz + l2_factors * R[pa, pb]
+                    _adam_array(R, grad, m_R, v_R, t_R, (pa, pb), lr, beta_1, beta_2, epsilon)
+            else:
+                w0 -= lr * g0
+                w[tch] -= lr * g_w
+                V[tch] = Vt - lr * g_V
+                for pa, pb in prs:
+                    R[pa, pb] -= lr * (gR[pa, pb] / bsz + l2_factors * R[pa, pb])
+    if state is not None:
+        state[0], state[1], state[2], state[3] = a_w0, a_w, a_V, a_R
+    if adam_state is not None:  # moment arrays mutate in place; write the scalars
+        adam_state[0], adam_state[1], adam_state[2] = m_w0, v_w0, t_w0
+    if ftrl_state is not None:
+        ftrl_state[0], ftrl_state[1] = z_w0, n_w0
+    return w0, w, V, R
+
+
+def fwfm_fit_multiclass_reference(
+    X,
+    y,
+    field_ids,
+    params,
+    *,
+    optimizer="adagrad",
+    learning_rate=0.05,
+    l2_linear=0.0,
+    l2_factors=0.0,
+    l1_linear=0.0,
+    l1_factors=0.0,
+    row_orders=None,
+    label_smoothing=0.0,
+    sample_weight=None,
+    beta_1=0.9,
+    beta_2=0.999,
+    epsilon=1e-8,
+    ftrl_beta=1.0,
+    batch_size=1,
+    state=None,
+    adam_state=None,
+    ftrl_state=None,
+):
+    """Train a multiclass (softmax) FwFM: one FwFM per class, coupled by softmax.
+
+    `params` = (w0 (C,), w (C, n), V (C, n, k), R (C, F, F)); mirrors
+    `fm_fit_multiclass_reference` with the appended R group
+    (docs/math_spec_fwfm.md). NumPy ground truth for `fwfm_fit_multiclass_csr`.
+    """
+    if optimizer not in OPTIMIZERS:
+        raise ValueError(f"unknown optimizer {optimizer!r}; expected one of {OPTIMIZERS}")
+    field_ids = np.asarray(field_ids, dtype=np.int64)
+    w0, w, V, R = params
+    w0 = np.array(w0, dtype=np.float64, copy=True)
+    w = np.array(w, dtype=np.float64, copy=True)
+    V = np.array(V, dtype=np.float64, copy=True)
+    R = np.array(R, dtype=np.float64, copy=True)
+    y = np.asarray(y)
+    n_classes = w0.shape[0]
+    n_fields = R.shape[1]
+    rows = list(_as_dense_rows(X))
+    sw = (
+        np.ones(len(rows))
+        if sample_weight is None
+        else np.asarray(sample_weight, dtype=np.float64)
+    )
+    if row_orders is None:
+        row_orders = np.arange(len(rows))[None, :]
+    adagrad = optimizer == "adagrad"
+    adam = optimizer == "adam"
+    ftrl = optimizer == "ftrl"
+    if adam_state is not None and not adam:
+        raise ValueError("adam_state is only valid for optimizer='adam'")
+    if ftrl_state is not None and not ftrl:
+        raise ValueError("ftrl_state is only valid for optimizer='ftrl'")
+    lr = learning_rate
+    eps = label_smoothing
+    off = eps / (n_classes - 1) if n_classes > 1 else 0.0
+    if state is None:
+        a_w0, a_w, a_V, a_R = (
+            np.zeros_like(w0), np.zeros_like(w), np.zeros_like(V), np.zeros_like(R)
+        )
+    else:
+        a_w0, a_w, a_V, a_R = state
+    if adam and adam_state is None:
+        m_w0, v_w0, t_w0 = np.zeros_like(w0), np.zeros_like(w0), np.zeros_like(w0)
+        m_w, v_w, t_w = np.zeros_like(w), np.zeros_like(w), np.zeros_like(w)
+        m_V, v_V, t_V = np.zeros_like(V), np.zeros_like(V), np.zeros_like(V)
+        m_R, v_R, t_R = np.zeros_like(R), np.zeros_like(R), np.zeros_like(R)
+    elif adam:
+        m_w0, v_w0, t_w0 = adam_state[0], adam_state[1], adam_state[2]
+        m_w, v_w, t_w = adam_state[3], adam_state[4], adam_state[5]
+        m_V, v_V, t_V = adam_state[6], adam_state[7], adam_state[8]
+        m_R, v_R, t_R = adam_state[9], adam_state[10], adam_state[11]
+    if ftrl and ftrl_state is None:
+        z_w0, n_w0 = np.zeros_like(w0), np.zeros_like(w0)
+        z_w, n_w = np.zeros_like(w), np.zeros_like(w)
+        z_V, n_V = np.zeros_like(V), np.zeros_like(V)
+        z_R, n_R = np.zeros_like(R), np.zeros_like(R)
+    elif ftrl:
+        z_w0, n_w0 = ftrl_state[0], ftrl_state[1]
+        z_w, n_w = ftrl_state[2], ftrl_state[3]
+        z_V, n_V = ftrl_state[4], ftrl_state[5]
+        z_R, n_R = ftrl_state[6], ftrl_state[7]
+    for order in np.asarray(row_orders):
+        for batch in _iter_batches(order, batch_size):
+            bsz = len(batch)
+            g_w0 = np.zeros(n_classes)
+            gw = np.zeros_like(w)
+            gV = np.zeros_like(V)
+            gR = np.zeros_like(R)
+            tpair = np.zeros((n_fields, n_fields), dtype=bool)
+            for rr in batch:
+                idx, val = rows[rr]
+                z = len(idx)
+                f = field_ids[idx]
+                yc = int(y[rr])
+                logits = np.empty(n_classes)
+                for c in range(n_classes):
+                    s = w0[c] + w[c][idx] @ val
+                    for a in range(z):
+                        for b in range(a + 1, z):
+                            pa, pb = min(f[a], f[b]), max(f[a], f[b])
+                            s += R[c, pa, pb] * (V[c][idx[a]] @ V[c][idx[b]]) * val[a] * val[b]
+                    logits[c] = s
+                ex = np.exp(logits - logits.max())  # stable softmax
+                p = ex / ex.sum()
+                for c in range(n_classes):
+                    target = (1.0 - eps) if c == yc else off
+                    g = sw[rr] * (p[c] - target)
+                    g_w0[c] += g
+                    gw[c][idx] += g * val
+                    for a in range(z):
+                        for b in range(a + 1, z):
+                            pa, pb = min(f[a], f[b]), max(f[a], f[b])
+                            coef = g * val[a] * val[b]
+                            gV[c][idx[a]] += coef * R[c, pa, pb] * V[c][idx[b]]
+                            gV[c][idx[b]] += coef * R[c, pa, pb] * V[c][idx[a]]
+                            gR[c, pa, pb] += coef * (V[c][idx[a]] @ V[c][idx[b]])
+                            tpair[pa, pb] = True
+            tch = _touched(batch, rows)
+            prs = np.argwhere(tpair)
+            for c in range(n_classes):
+                g0 = g_w0[c] / bsz
+                if ftrl:
+                    w0[c], z_w0[c], n_w0[c] = _ftrl_scalar(
+                        w0[c], g0, z_w0[c], n_w0[c], lr, ftrl_beta, 0.0, 0.0
+                    )
+                    _ftrl_array(w[c], gw[c][tch] / bsz, z_w[c], n_w[c], tch, lr, ftrl_beta,
+                                l1_linear, l2_linear)
+                    _ftrl_array(V[c], gV[c][tch] / bsz, z_V[c], n_V[c], tch, lr, ftrl_beta,
+                                l1_factors, l2_factors)
+                    for pa, pb in prs:
+                        _ftrl_array(R[c], gR[c, pa, pb] / bsz, z_R[c], n_R[c], (pa, pb), lr,
+                                    ftrl_beta, l1_factors, l2_factors)
+                    continue
+                g_w = gw[c][tch] / bsz + l2_linear * w[c][tch]
+                g_V = gV[c][tch] / bsz + l2_factors * V[c][tch]
+                Vt = V[c][tch]
+                if adagrad:
+                    a_w0[c] += g0 * g0
+                    w0[c] -= lr * g0 / math.sqrt(a_w0[c] + ADAGRAD_EPS)
+                    a_w[c][tch] += g_w**2
+                    w[c][tch] -= lr * g_w / np.sqrt(a_w[c][tch] + ADAGRAD_EPS)
+                    a_V[c][tch] += g_V**2
+                    V[c][tch] = Vt - lr * g_V / np.sqrt(a_V[c][tch] + ADAGRAD_EPS)
+                    for pa, pb in prs:
+                        grad = gR[c, pa, pb] / bsz + l2_factors * R[c, pa, pb]
+                        a_R[c, pa, pb] += grad * grad
+                        R[c, pa, pb] -= lr * grad / math.sqrt(a_R[c, pa, pb] + ADAGRAD_EPS)
+                elif adam:
+                    w0[c], m_w0[c], v_w0[c], t_w0[c] = _adam_scalar(
+                        w0[c], g0, m_w0[c], v_w0[c], t_w0[c], lr, beta_1, beta_2, epsilon
+                    )
+                    _adam_array(w[c], g_w, m_w[c], v_w[c], t_w[c], tch, lr, beta_1, beta_2,
+                                epsilon)
+                    _adam_array(V[c], g_V, m_V[c], v_V[c], t_V[c], tch, lr, beta_1, beta_2,
+                                epsilon)
+                    for pa, pb in prs:
+                        grad = gR[c, pa, pb] / bsz + l2_factors * R[c, pa, pb]
+                        _adam_array(R[c], grad, m_R[c], v_R[c], t_R[c], (pa, pb), lr, beta_1,
+                                    beta_2, epsilon)
+                else:
+                    w0[c] -= lr * g0
+                    w[c][tch] -= lr * g_w
+                    V[c][tch] = Vt - lr * g_V
+                    for pa, pb in prs:
+                        R[c, pa, pb] -= lr * (gR[c, pa, pb] / bsz + l2_factors * R[c, pa, pb])
+    if state is not None:
+        state[0], state[1], state[2], state[3] = a_w0, a_w, a_V, a_R
+    if adam_state is not None:
+        adam_state[0], adam_state[1], adam_state[2] = m_w0, v_w0, t_w0
+    if ftrl_state is not None:
+        ftrl_state[0], ftrl_state[1] = z_w0, n_w0
+    return w0, w, V, R

@@ -111,14 +111,19 @@ groundwork (kernels land separately, gated on real-GPU validation — see
   previously reference-bound cells (Adam/FTRL/multiclass; FFM+Adam ES
   49.5 s → 0.86 s on the synthetic bench); `partial_fit`/`warm_start` ride the
   same path. _Priority: P0._
-- [ ] **FwFM (`FwFMClassifier`)** — Field-weighted FM (moved up from v1.0; it
+- [x] **FwFM (`FwFMClassifier`)** — Field-weighted FM (moved up from v1.0; it
   remains the 1.0 headline). _Priority: P0._
-  - DoD: write `docs/math_spec_fwfm.md` FIRST (field-pair weights
-    `r_{f(i),f(j)}`, exact prediction + loss); then NumPy reference → Rust kernel
-    → `FwFMClassifier`, with a parity test at each layer; existing FM/FFM
-    formulas untouched (no DeepFM/AFM substitution); `check_estimator`,
-    save/load, `__all__` + api_design + CHANGELOG. (AFM/FEFM follow this template
-    post-1.0.)
+  - DoD met: `docs/math_spec_fwfm.md` written FIRST (field-pair weights
+    `r_{f(i),f(j)}` upper-triangle, exact prediction/gradients/updates, R=ones
+    init = plain FM); NumPy reference → Rust kernel (`rust/src/fwfm.rs`) →
+    `FwFMClassifier`, parity-tested at each layer (predict 1e-12, train
+    RTOL=1e-9 × optimizer × loss × batch_size, multiclass, ES bit-exact
+    hand-off); collapse-to-FM property test; existing FM/FFM formulas
+    untouched; `check_estimator`, save/load, `partial_fit`/`warm_start`,
+    `__all__` + api_design + CHANGELOG. Binary + multiclass; serial (rayon
+    `n_jobs` for FwFM deferred). (AFM/FEFM/FmFM follow this template post-1.0;
+    FmFM is the research-recommended next variant — one field-pair k×k matrix
+    generalizes FM/FwFM/FvFM/FmFM.)
 - [ ] **Bi-interaction pooling (`BiInteractionPooling`)** — the honest
   "nfm_pooling": a sklearn transformer emitting the k-dim bi-interaction
   vector `0.5 * ((sum_i x_i v_i)^2 - sum_i (x_i v_i)^2)` from a fitted FM for
