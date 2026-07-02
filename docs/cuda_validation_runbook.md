@@ -6,6 +6,23 @@ results are pasted into the PR (docs/gpu_backend_plan.md). The development
 machines are CUDA-less (Apple Silicon); CI only compile-checks the
 `cuda-backend` feature (`cuda-check` job) — it never executes kernels.
 
+## 0. Automated path: Colab GPU (recommended)
+
+With the Colab CLI installed and authenticated
+(`uv tool install google-colab-cli`), the whole runbook is one command from a
+committed tree:
+
+```bash
+bash scripts/colab_gpu_test.sh              # T4; add --full-bench for the full grid
+```
+
+It provisions a T4 VM, uploads `git archive HEAD`, installs rustup + maturin,
+builds with `--features cuda-backend`, asserts `has_cuda()`, runs
+`tests/test_cuda_parity.py` (pass-not-skip) + the full suite +
+`benchmarks/bench_cuda.py`, downloads the report to
+`/tmp/<date>-modernfm-cuda-validation.md`, and stops the VM. Paste that report
+into the PR. Steps 1–5 below are the manual equivalent for any other GPU box.
+
 ## 1. Get a GPU box
 
 Any Linux x86_64 machine with an NVIDIA GPU (compute capability >= 6.0 for

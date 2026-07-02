@@ -9,6 +9,7 @@ docs/cuda_validation_runbook.md; prints machine info to paste into PRs.
 """
 
 import platform
+import sys
 import time
 from statistics import median
 
@@ -38,16 +39,20 @@ def timed(fn, repeats=5):
 
 
 def main():
+    quick = "--quick" in sys.argv  # trimmed grid for short validation runs
     print(f"machine: {platform.platform()} / python {platform.python_version()}")
     print(f"has_rust={_backend.has_rust()} has_cuda={_backend.has_cuda()}")
     if not _backend.has_cuda():
         print("no CUDA device/build — nothing to benchmark")
         return
     rng = np.random.default_rng(0)
+    rows_grid = (100_000,) if quick else (10_000, 100_000, 1_000_000)
+    nnz_grid = (8, 32) if quick else (8, 32, 128)
+    k_grid = (8, 32) if quick else (8, 16, 32, 64)
     print(f"{'rows':>10} {'nnz/row':>8} {'k':>4} {'cpu ms':>10} {'cuda ms':>10} {'speedup':>8}")
-    for n_rows in (10_000, 100_000, 1_000_000):
-        for avg_nnz in (8, 32, 128):
-            for k in (8, 16, 32, 64):
+    for n_rows in rows_grid:
+        for avg_nnz in nnz_grid:
+            for k in k_grid:
                 d = 100_000
                 X = make_csr(n_rows, d, avg_nnz)
                 w0, w, V = 0.1, rng.normal(size=d), rng.normal(size=(d, k))
