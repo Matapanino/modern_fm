@@ -22,8 +22,11 @@ jobs:
           # needs no CUDA toolkit to build, stays manylinux-clean (verified by
           # the linux-wheel-check job below) and imports fine on CUDA-less
           # machines (has_cuda() is just False there).
+          # NB: CLI --features OVERRIDES pyproject's [tool.maturin] features,
+          # so pyo3/extension-module must be repeated here or the build tries
+          # to link libpython (absent in manylinux).
           - os: ubuntu-latest
-            args: --release --out dist --features cuda-backend
+            args: --release --out dist --features cuda-backend,pyo3/extension-module
             manylinux: auto
           - os: macos-latest
             args: --release --out dist --target universal2-apple-darwin

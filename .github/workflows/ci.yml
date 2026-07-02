@@ -92,10 +92,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      # NB: CLI --features OVERRIDES pyproject's [tool.maturin] features, so
+      # pyo3/extension-module must be repeated (else the build links libpython,
+      # absent in manylinux).
       - uses: PyO3/maturin-action@v1
         with:
           command: build
-          args: --release --out dist --features cuda-backend
+          args: --release --out dist --features cuda-backend,pyo3/extension-module
           manylinux: auto
       - name: Install the wheel (not the source tree)
         run: |
