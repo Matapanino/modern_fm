@@ -16,10 +16,12 @@ The Python API must feel like scikit-learn:
 Primary backend: Rust CPU via PyO3/maturin, efficient on sparse CSR.
 The pure-NumPy **reference implementations** in `python/modern_fm/_reference.py`
 are the ground truth for all backends — never change them for speed.
-Current state: v0.4.0 (API completeness & online learning) is the released
-version; the v0.5 milestone (Rust early-stopping fast path, FwFM,
-bi-interaction pooling, CUDA backend plumbing) is in progress — see
-`docs/roadmap.md` and `docs/gpu_backend_plan.md`. Rust kernels in `rust/` cover
+Current state: v0.5.0 is the released version (Rust early-stopping fast path,
+`FwFMClassifier`, `BiInteractionPooling`, and the optional CUDA backend:
+`cuda-backend` Cargo feature + FM CSR prediction kernel, T4-validated via
+`scripts/colab_gpu_test.sh` / `docs/cuda_validation_runbook.md`; CUDA supports
+FM prediction only and is never a silent fallback). See `docs/roadmap.md` and
+`docs/gpu_backend_plan.md`. Rust kernels in `rust/` cover
 FM/FFM prediction and training — FM binary (logistic/squared) + multiclass softmax
 and FFM binary (logistic/squared) + multiclass softmax, optimizers
 SGD/AdaGrad/Adam/FTRL, mini-batch (`batch_size`) and `rayon` row-parallelism
@@ -35,9 +37,9 @@ optimizer-state round-trip (`python/modern_fm/_partial.py`). Estimators:
 `FwFMClassifier` (field-weighted FM, `docs/math_spec_fwfm.md` +
 `rust/src/fwfm.rs`; serial); scikit-learn is a runtime dependency and
 `check_estimator`-clean. The path to a stable release — the
-remaining v1.0 work (FwFM, calibration, top-interactions, docs site, real-data
-benchmark, API freeze) and the `## v1.0 — criteria` gate — is fixed in
-`docs/roadmap.md`; consult it before starting new work.
+remaining v1.0 work (calibration, top-interactions, docs site, real-data
+benchmark, API freeze; FwFM shipped in v0.5) and the `## v1.0 — criteria` gate
+— is fixed in `docs/roadmap.md`; consult it before starting new work.
 
 ## Target models
 

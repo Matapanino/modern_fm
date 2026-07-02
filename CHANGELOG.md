@@ -3,7 +3,7 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-02
 
 ### Added
 - **CUDA FM prediction** (docs/gpu_backend_plan.md milestone 1): an NVRTC
