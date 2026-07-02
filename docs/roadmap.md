@@ -183,11 +183,14 @@ Headline model variant + production-CTR features + docs/bench polish + API
 freeze. Shipping this milestone = tagging v1.0.0.
 
 - [ ] **FwFM** — pulled into v0.5 (see above); the v1.0 gate keeps its DoD.
-- [ ] **Probability calibration** — calibrated `predict_proba` for CTR.
+- [x] **Probability calibration** — calibrated `predict_proba` for CTR.
   _Priority: P1._
-  - DoD: sklearn `CalibratedClassifierCV`-compatible (recommended) or built-in
-    Platt/isotonic; ECE/reliability test shows improvement on synthetic
-    miscalibrated data; example + docs.
+  - DoD met via the recommended path: every public classifier is
+    `CalibratedClassifierCV`-compatible (no library-specific API);
+    `tests/test_calibration.py` pins ECE + Brier improvement on synthetic
+    miscalibrated data (label-smoothing compression, sigmoid + isotonic) and
+    compatibility for FM/FFM/FwFM; `examples/calibration.py` +
+    `docs/api_design.md` "Probability calibration" section.
 - [ ] **Model inspection (top interactions)** — strongest learned pairwise
   interactions. _Priority: P1._
   - DoD: API returning top-`|<v_i, v_j>|` feature pairs for a fitted FM/FFM
