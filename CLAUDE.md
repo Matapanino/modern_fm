@@ -25,13 +25,16 @@ and FFM binary (logistic/squared) + multiclass softmax, optimizers
 SGD/AdaGrad/Adam/FTRL, mini-batch (`batch_size`) and `rayon` row-parallelism
 (`n_jobs`) — dispatched through the private `modern_fm._backend` module (NumPy
 reference fallback when the extension is not built). Early stopping now works for
-every optimizer (incl. FTRL) across binary and multiclass FM/FFM; the
-Adam/FTRL/multiclass optimizer-state hand-offs round-trip through the NumPy
-reference path. `partial_fit` (sklearn first-call `classes`) and `warm_start` add
-incremental/streaming training for all four estimators, with an exact
+every optimizer (incl. FTRL) across binary and multiclass FM/FFM, and every
+optimizer-state hand-off (AdaGrad/Adam/FTRL, binary + multiclass) round-trips
+through the Rust kernel — the epoch-driven loop is bit-identical to a single
+multi-epoch Rust call. `partial_fit` (sklearn first-call `classes`) and `warm_start` add
+incremental/streaming training for all estimators, with an exact
 optimizer-state round-trip (`python/modern_fm/_partial.py`). Estimators:
-`FMRegressor`, `FMClassifier`, `FFMClassifier`, `FFMRegressor`; scikit-learn is a
-runtime dependency and `check_estimator`-clean. The path to a stable release — the
+`FMRegressor`, `FMClassifier`, `FFMClassifier`, `FFMRegressor`, and
+`FwFMClassifier` (field-weighted FM, `docs/math_spec_fwfm.md` +
+`rust/src/fwfm.rs`; serial); scikit-learn is a runtime dependency and
+`check_estimator`-clean. The path to a stable release — the
 remaining v1.0 work (FwFM, calibration, top-interactions, docs site, real-data
 benchmark, API freeze) and the `## v1.0 — criteria` gate — is fixed in
 `docs/roadmap.md`; consult it before starting new work.
@@ -39,7 +42,8 @@ benchmark, API freeze) and the `## v1.0 — criteria` gate — is fixed in
 ## Target models
 
 - v0.1: `FMRegressor`, `FMClassifier`, `FFMClassifier`
-- Later: `FFMRegressor`, `FwFMClassifier`, `AFMClassifier` (see `docs/roadmap.md`)
+- v0.4: `FFMRegressor`; v0.5: `FwFMClassifier` (docs/math_spec_fwfm.md)
+- Later: `FmFMClassifier`, `AFMClassifier` (see `docs/roadmap.md`)
 
 ## Non-goals for v0.1
 

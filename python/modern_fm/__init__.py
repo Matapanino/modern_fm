@@ -3,7 +3,9 @@
 from ._base import NotFittedError
 from .ffm import FFMClassifier, FFMRegressor
 from .fm import FMClassifier, FMRegressor
+from .fwfm import FwFMClassifier
 from .libffm import dump_libffm, load_libffm
+from .pooling import BiInteractionPooling
 from .preprocessing import CategoricalEncoder
 
 __version__ = "0.4.0"
@@ -13,6 +15,8 @@ __all__ = [
     "FMRegressor",
     "FFMClassifier",
     "FFMRegressor",
+    "FwFMClassifier",
+    "BiInteractionPooling",
     "CategoricalEncoder",
     "NotFittedError",
     "load_libffm",

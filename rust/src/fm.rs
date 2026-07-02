@@ -6,7 +6,9 @@
 use rayon::prelude::*;
 
 use crate::data::{dense_row_nonzeros, CsrView};
-use crate::optimizer::{loss_grad, step_coord, step_param, AdamState, FtrlState, Loss, Optimizer};
+use crate::optimizer::{
+    loss_grad, step_coord, step_param, AdamStateMut, FtrlStateMut, Loss, McState, Optimizer,
+};
 
 /// Score one row given its nonzero (index, value) pairs.
 /// `v` is row-major (n_features, k).
@@ -178,8 +180,8 @@ impl FmGradAccum {
         acc_w0: &mut f64,
         acc_w: &mut [f64],
         acc_v: &mut [f64],
-        adam: &mut AdamState,
-        ftrl: &mut FtrlState,
+        adam: &mut AdamStateMut<'_>,
+        ftrl: &mut FtrlStateMut<'_>,
         k: usize,
         opt: Optimizer,
         lr: f64,
@@ -190,13 +192,13 @@ impl FmGradAccum {
     ) {
         step_param(
             w0, self.g_w0 / bsz, 0.0, 0.0, acc_w0,
-            &mut adam.m_w0, &mut adam.s_w0, &mut adam.t_w0, &mut ftrl.z_w0, &mut ftrl.n_w0, lr, opt,
+            adam.m_w0, adam.s_w0, adam.t_w0, ftrl.z_w0, ftrl.n_w0, lr, opt,
         );
         self.g_w0 = 0.0;
         for &i in &self.touched {
             step_coord(
                 &mut w[i], self.gw[i] / bsz, l1_linear, l2_linear, &mut acc_w[i],
-                &mut adam.m_w, &mut adam.s_w, &mut adam.t_w, &mut ftrl.z_w, &mut ftrl.n_w, i, lr, opt,
+                adam.m_w, adam.s_w, adam.t_w, ftrl.z_w, ftrl.n_w, i, lr, opt,
             );
             self.gw[i] = 0.0;
             let base = i * k;
@@ -204,7 +206,7 @@ impl FmGradAccum {
                 let vi = base + f;
                 step_coord(
                     &mut v[vi], self.gv[vi] / bsz, l1_factors, l2_factors, &mut acc_v[vi],
-                    &mut adam.m_v, &mut adam.s_v, &mut adam.t_v, &mut ftrl.z_v, &mut ftrl.n_v, vi, lr, opt,
+                    adam.m_v, adam.s_v, adam.t_v, ftrl.z_v, ftrl.n_v, vi, lr, opt,
                 );
                 self.gv[vi] = 0.0;
             }
@@ -251,6 +253,10 @@ fn accumulate_chunk(
 /// in parallel, then reduced in chunk order; n_jobs=1 is the serial path and is
 /// bit-identical to the reference. n_jobs>1 differs only in float summation order
 /// (reproducible for a fixed n_jobs).
+///
+/// `adam`/`ftrl` hold the per-coordinate optimizer state: kernel-local
+/// (`AdamBuf`/`FtrlBuf`) for a single all-epochs call, or caller-provided
+/// backing round-tripped across epoch-driven early-stopping calls.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_csr(
     csr: &CsrView,
@@ -262,6 +268,8 @@ pub fn fit_csr(
     acc_w0: &mut f64,
     acc_w: &mut [f64],
     acc_v: &mut [f64],
+    mut adam: AdamStateMut<'_>,
+    mut ftrl: FtrlStateMut<'_>,
     k: usize,
     loss: Loss,
     opt: Optimizer,
@@ -278,10 +286,8 @@ pub fn fit_csr(
     let n = w.len();
     let n_threads = n_jobs.max(1);
     // One reusable partial accumulator per thread; thread 0 doubles as the
-    // reduced batch accumulator. Adam/FTRL state is internal (never round-tripped).
+    // reduced batch accumulator.
     let mut accs: Vec<FmGradAccum> = (0..n_threads).map(|_| FmGradAccum::new(n, k)).collect();
-    let mut adam = AdamState::new(matches!(opt, Optimizer::Adam { .. }), n, n * k);
-    let mut ftrl = FtrlState::new(matches!(opt, Optimizer::Ftrl { .. }), n, n * k);
     for epoch in row_orders.chunks(n_rows) {
         for batch in epoch.chunks(batch_size) {
             if n_threads == 1 {
@@ -316,7 +322,9 @@ pub fn fit_csr(
 /// batch-start parameters; each class accumulates and flushes independently over
 /// the shared touched-feature set. `w0` is (C,), `w` is row-major (C, n_features),
 /// `v` is row-major (C, n_features, k); `y` holds class indices in [0, n_classes).
-/// AdaGrad accumulators are internal and span all epochs in `row_orders`.
+/// `st` holds the per-class optimizer state (AdaGrad accumulators + Adam/FTRL
+/// per-coordinate state): kernel-local for a single all-epochs call, or
+/// caller-provided backing round-tripped across epoch-driven early-stopping calls.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_multiclass_csr(
     csr: &CsrView,
@@ -325,6 +333,7 @@ pub fn fit_multiclass_csr(
     w0: &mut [f64],
     w: &mut [f64],
     v: &mut [f64],
+    mut st: McState<'_>,
     n_classes: usize,
     n_features: usize,
     k: usize,
@@ -340,14 +349,7 @@ pub fn fit_multiclass_csr(
     row_orders: &[i64],
 ) {
     let n = n_features;
-    let mut acc_w0 = vec![0.0; n_classes];
-    let mut acc_w = vec![0.0; n_classes * n];
-    let mut acc_v = vec![0.0; n_classes * n * k];
-    let adam = matches!(opt, Optimizer::Adam { .. });
-    let ftrl = matches!(opt, Optimizer::Ftrl { .. });
     let mut accums: Vec<FmGradAccum> = (0..n_classes).map(|_| FmGradAccum::new(n, k)).collect();
-    let mut adams: Vec<AdamState> = (0..n_classes).map(|_| AdamState::new(adam, n, n * k)).collect();
-    let mut ftrls: Vec<FtrlState> = (0..n_classes).map(|_| FtrlState::new(ftrl, n, n * k)).collect();
     let off = if n_classes > 1 {
         label_smoothing / (n_classes as f64 - 1.0)
     } else {
@@ -390,9 +392,11 @@ pub fn fit_multiclass_csr(
             let bsz = batch.len() as f64;
             for c in 0..n_classes {
                 let (wr, vr) = (c * n..(c + 1) * n, c * n * k..(c + 1) * n * k);
+                let (acc_w0_c, acc_w_c, acc_v_c, mut adam_c, mut ftrl_c) =
+                    st.class_views(c, n, n * k);
                 accums[c].flush(
-                    bsz, &mut w0[c], &mut w[wr.clone()], &mut v[vr.clone()],
-                    &mut acc_w0[c], &mut acc_w[wr], &mut acc_v[vr], &mut adams[c], &mut ftrls[c], k,
+                    bsz, &mut w0[c], &mut w[wr], &mut v[vr],
+                    acc_w0_c, acc_w_c, acc_v_c, &mut adam_c, &mut ftrl_c, k,
                     opt, lr, l1_linear, l2_linear, l1_factors, l2_factors,
                 );
             }
@@ -403,6 +407,7 @@ pub fn fit_multiclass_csr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimizer::{AdamBuf, FtrlBuf, McBuf};
 
     /// Naive O(z^2 k) pairwise sum, the math_spec definition.
     fn fm_naive(indices: &[usize], values: &[f64], w0: f64, w: &[f64], v: &[f64], k: usize) -> f64 {
@@ -447,8 +452,10 @@ mod tests {
         let csr = CsrView::new(&indptr, &indices, &data, 1).unwrap();
         let (mut w0, mut w, mut v) = (0.0, vec![0.0], vec![0.0]);
         let (mut a0, mut aw, mut av) = (0.0, vec![0.0], vec![0.0]);
+        let (mut ab, mut fb) = (AdamBuf::new(false, 1, 1), FtrlBuf::new(false, 1, 1));
         fit_csr(
-            &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, &mut a0, &mut aw, &mut av, 1,
+            &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, &mut a0, &mut aw, &mut av,
+            ab.view(), fb.view(), 1,
             Loss::Logistic, Optimizer::Sgd, 1.0, 0.0, 0.0, 0.0, 0.0, 1, 1, 1, &[0],
         );
         assert!((w0 - 0.5).abs() < 1e-15);
@@ -467,8 +474,10 @@ mod tests {
         let csr = CsrView::new(&indptr, &indices, &data, 1).unwrap();
         let (mut w0, mut w, mut v) = (0.0, vec![0.0], vec![0.0]);
         let (mut a0, mut aw, mut av) = (0.0, vec![0.0], vec![0.0]);
+        let (mut ab, mut fb) = (AdamBuf::new(true, 1, 1), FtrlBuf::new(false, 1, 1));
         fit_csr(
-            &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, &mut a0, &mut aw, &mut av, 1,
+            &csr, &[1.0], &[1.0], &mut w0, &mut w, &mut v, &mut a0, &mut aw, &mut av,
+            ab.view(), fb.view(), 1,
             Loss::Logistic, Optimizer::Adam { beta1: 0.9, beta2: 0.999, eps: 1e-8 }, 1.0,
             0.0, 0.0, 0.0, 0.0, 1, 1, 1, &[0],
         );
@@ -489,8 +498,9 @@ mod tests {
         let mut w0 = vec![0.0, 0.0];
         let mut w = vec![0.0, 0.0]; // (C=2, n=1)
         let mut v = vec![0.0, 0.0]; // (C=2, n=1, k=1)
+        let mut mcb = McBuf::new(false, false, 2, 1, 1);
         fit_multiclass_csr(
-            &csr, &[0], &[1.0], &mut w0, &mut w, &mut v, 2, 1, 1, Optimizer::Sgd, 1.0,
+            &csr, &[0], &[1.0], &mut w0, &mut w, &mut v, mcb.view(), 2, 1, 1, Optimizer::Sgd, 1.0,
             0.0, 0.0, 0.0, 0.0, 0.0, 1, 1, &[0],
         );
         assert!((w0[0] - 0.5).abs() < 1e-15);

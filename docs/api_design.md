@@ -33,7 +33,9 @@ model = FMClassifier(
     min_delta=0.0,
     warm_start=False,         # fit() resumes from the previous solution + optimizer state
     dtype="float32",          # "float32" | "float64"
-    backend="rust_cpu",       # fixed in v0.1; later "cuda", "torch"
+    backend="rust_cpu",       # or "cuda": requires a cuda-backend build + GPU; no
+                              # kernels yet -> NotImplementedError, never a silent
+                              # CPU fallback (docs/gpu_backend_plan.md)
     random_state=None,
     n_jobs=-1,
     verbose=0,
@@ -88,9 +90,59 @@ calls do not take field_ids.
 `fit(X, y, field_ids=…)` takes the same field mapping and stores `field_ids_` /
 `n_fields_`; `predict(X)` returns the raw FFM score (squared-error loss).
 
+## FwFMClassifier
+
+Field-weighted FM (docs/math_spec_fwfm.md): FM-shaped factors `V (n, k)` plus
+one learned scalar weight per field pair, `r_ (n_fields, n_fields)` (upper
+triangle used), scaling each pairwise interaction. `r_` initializes to ones,
+so a fresh FwFM is exactly a plain FM.
+
+```python
+from modern_fm import FwFMClassifier
+
+model = FwFMClassifier(n_factors=8, random_state=42)
+model.fit(X, y, field_ids=field_ids)   # same field plumbing as FFMClassifier
+model.predict_proba(X)
+```
+
+The constructor, `fit(X, y, field_ids=…)`, binary/softmax dispatch,
+early stopping / `eval_set`, `partial_fit(classes=…, field_ids=…)` and
+`warm_start` all mirror `FFMClassifier`. Differences: training is serial in
+v0.5 (`n_jobs` is accepted but does not parallelize FwFM), and there is one
+extra learned attribute `r_` — `(n_fields, n_fields)` binary,
+`(n_classes, n_fields, n_fields)` multiclass — regularized by
+`l2_factors` / `l1_factors`.
+
+## BiInteractionPooling (feature transform)
+
+Bi-interaction pooling (He & Chua, SIGIR 2017) as an sklearn transformer — the
+k-dim FM pairwise vector before its factor-sum, for downstream models. As a
+*predictor* a linear head over it provably collapses to plain FM (NFM = this +
+an MLP, which is out of scope), so it ships as a transform, not a model.
+
+```python
+from modern_fm import BiInteractionPooling, FMRegressor
+from sklearn.pipeline import make_pipeline
+from sklearn.linear_model import LogisticRegression
+
+pipe = make_pipeline(
+    BiInteractionPooling(FMRegressor(n_factors=8, random_state=0)),
+    LogisticRegression(),
+).fit(X, y)
+```
+
+- `BiInteractionPooling(estimator=None)` clones and fits the given FM
+  (`None` -> `FMRegressor(n_factors=8)`); `transform(X)` returns
+  `(n_samples, n_factors)` pooled features (multiclass inner FMs pool per
+  class, concatenated to `(n_samples, n_classes * n_factors)`);
+  `get_feature_names_out()` follows the sklearn convention.
+- The fitted FM estimators expose the same features directly via
+  `model.bi_interaction(X)` (deliberately **not** named `transform`, so plain
+  FMs keep plain-estimator semantics in sklearn tooling).
+
 ## Partial fit / warm start (incremental & streaming training)
 
-All four estimators support incremental training:
+All five estimators support incremental training:
 
 ```python
 model.partial_fit(X, y, classes=None, sample_weight=None)                  # FM*
@@ -125,11 +177,15 @@ parameters.
 - `w0_` (float), `w_` (n_features,), `V_`
   - FM: `V_` shape `(n_features, n_factors)`
   - FFM: `V_` shape `(n_features, n_fields, n_factors)`
+  - FwFM: `V_` shape `(n_features, n_factors)` plus `r_` shape
+    `(n_fields, n_fields)` (upper triangle used)
 - `classes_` (classifiers), `n_features_in_`, `n_iter_`
-- FFM: `field_ids_`, `n_fields_`
+- FFM / FwFM: `field_ids_`, `n_fields_`
 - multiclass (one parameter set per class): `w0_` shape `(n_classes,)`, `w_` shape
   `(n_classes, n_features)`; FM `V_` shape `(n_classes, n_features, n_factors)`,
-  FFM `V_` shape `(n_classes, n_features, n_fields, n_factors)`
+  FFM `V_` shape `(n_classes, n_features, n_fields, n_factors)`,
+  FwFM `V_` shape `(n_classes, n_features, n_factors)` + `r_` shape
+  `(n_classes, n_fields, n_fields)`
 
 ## Errors and validation
 

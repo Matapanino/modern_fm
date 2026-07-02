@@ -12,8 +12,9 @@ Optimizers: SGD, AdaGrad, Adam ("adam", with beta_1/beta_2/epsilon), and
 FTRL-Proximal ("ftrl", with l1_linear/l1_factors/ftrl_beta; L1 yields exact zeros).
 
 Early stopping supports every optimizer (SGD/AdaGrad/Adam/FTRL) and works with
-multiclass; the Adam, FTRL, and multiclass state hand-offs round-trip through the
-NumPy reference path. See docs/roadmap.md.
+multiclass; every per-epoch optimizer-state hand-off (AdaGrad accumulators,
+Adam moments, FTRL (z, n), per-class multiclass state) round-trips through the
+Rust kernel. See docs/roadmap.md.
 """
 
 from __future__ import annotations
@@ -41,6 +42,31 @@ from ._reference_train import (
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
 
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
+
+
+def _validate_backend(backend):
+    """Validate the `backend` constructor parameter at fit time.
+
+    "rust_cpu" is the (only implemented) default. "cuda" is accepted as
+    plumbing for the optional CUDA backend (docs/gpu_backend_plan.md): it
+    requires a `cuda-backend` build plus an NVIDIA driver + device, and until
+    the first CUDA kernels land every operation raises NotImplementedError —
+    there is deliberately no silent CPU fallback.
+    """
+    if backend not in ("rust_cpu", "cuda"):
+        raise ValueError(f"unknown backend {backend!r}; expected 'rust_cpu' or 'cuda'")
+    if backend == "cuda":
+        if not _backend.has_cuda():
+            raise RuntimeError(
+                "backend='cuda' requires modern_fm built with the `cuda-backend` "
+                "Cargo feature and an NVIDIA GPU + driver at runtime; this "
+                "build/machine has neither (see docs/gpu_backend_plan.md)"
+            )
+        raise NotImplementedError(
+            "backend='cuda' has no kernels yet: FM/FFM/FwFM prediction and "
+            "training currently run only on backend='rust_cpu' "
+            "(docs/gpu_backend_plan.md tracks the CUDA milestones)"
+        )
 
 
 def _check_X(X, n_features=None):
@@ -171,8 +197,7 @@ class _FMBase(BaseEstimator, ModelIOMixin):
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
         if self.dtype not in ("float32", "float64"):
             raise ValueError(f"unknown dtype {self.dtype!r}; expected 'float32' or 'float64'")
-        if self.backend != "rust_cpu":
-            raise ValueError(f"unknown backend {self.backend!r}; only 'rust_cpu' exists in v0.1")
+        _validate_backend(self.backend)
         if not (isinstance(self.batch_size, (int, np.integer)) and self.batch_size >= 1):
             raise ValueError(f"batch_size must be a positive integer, got {self.batch_size!r}")
         _resolve_n_jobs(self.n_jobs)  # validate (raises on a bad n_jobs)
@@ -247,8 +272,8 @@ class _FMBase(BaseEstimator, ModelIOMixin):
             init, opt = resumed
         row_orders = make_row_orders(rng, n_tr, self.max_iter)
         # AdaGrad/SGD round-trip accumulators via `state`; Adam and FTRL round-trip
-        # their state (moments / (z, n)) via `adam_state` / `ftrl_state`, which route
-        # through the NumPy reference path. warm_start resumes the persisted state.
+        # their state (moments / (z, n)) via `adam_state` / `ftrl_state` — all
+        # through the Rust kernel. warm_start resumes the persisted state.
         is_adam = self.optimizer == "adam"
         is_ftrl = self.optimizer == "ftrl"
         if opt is not None:
@@ -298,11 +323,25 @@ class _FMBase(BaseEstimator, ModelIOMixin):
         X = _validate_X(self, X, reset=False)
         return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_)
 
+    def bi_interaction(self, X):
+        """Bi-interaction pooled features from the fitted factors: the k-dim
+        FM pairwise term before its factor-sum (see modern_fm.pooling).
+        Returns (n_samples, n_factors), or (n_samples, n_classes * n_factors)
+        for a multiclass classifier. Deliberately not named ``transform`` —
+        use ``BiInteractionPooling`` as a Pipeline step."""
+        check_is_fitted(self)
+        X = _validate_X(self, X, reset=False)
+        if self.V_.ndim == 3:  # multiclass: per-class pooling, concatenated
+            return np.hstack(
+                [_backend.fm_bi_interaction(X, self.V_[c]) for c in range(self.V_.shape[0])]
+            )
+        return _backend.fm_bi_interaction(X, self.V_)
+
     def _advance_one_epoch(self, X, y, loss, sample_weight, *, multiclass, first_call, n_classes):
         """One natural-order pass continuing ``self._opt_state`` (the partial_fit
         primitive). Inits params + optimizer state on the first call; writes back
-        w0_/w_/V_ in ``dtype`` and bumps n_iter_. Adam/FTRL/multiclass ride the
-        NumPy reference path; binary sgd/adagrad reuse the Rust ``state`` round-trip."""
+        w0_/w_/V_ in ``dtype`` and bumps n_iter_. Every optimizer's state
+        (including Adam/FTRL and multiclass) round-trips through the Rust kernel."""
         n_rows, n_features = X.shape
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
         if first_call:
@@ -524,8 +563,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
 
     def _fit_multiclass_es(self, X, y, sample_weight, eval_val):
         """Epoch-by-epoch multiclass fit with early stopping (softmax cross-entropy
-        metric). The Rust multiclass kernel keeps its state internal, so the
-        per-epoch optimizer-state hand-off runs on the NumPy reference path."""
+        metric); the per-class optimizer state round-trips through the Rust kernel."""
         n_rows, n_features = X.shape
         n_classes = self.classes_.shape[0]
         if not 0.0 <= self.label_smoothing < 1.0:

@@ -9,6 +9,7 @@ import pytest
 import scipy.sparse as sp
 from conftest import random_sparse_dense_X
 from modern_fm import _backend
+from modern_fm._partial import make_opt_state
 from modern_fm._reference_train import (
     ffm_fit_multiclass_reference,
     ffm_fit_reference,
@@ -543,3 +544,166 @@ def test_parallel_is_reproducible_for_fixed_n_jobs(rng):
     b = _backend.fm_fit(X, y, params, **kw)
     np.testing.assert_array_equal(a[2], b[2])  # exact, not just close
     np.testing.assert_array_equal(a[1], b[1])
+
+
+# ---------------------------------------------------------------------------
+# Early-stopping state hand-off: the epoch-driven loop (row_orders[e:e+1] with
+# a persistent optimizer-state list, exactly how _fit_es drives the backend)
+# must equal ONE multi-epoch Rust call bit-for-bit — the boundary crossing may
+# not change a single float operation. A silent fallback to the NumPy
+# reference would break bit-exactness (summation orders differ), so these also
+# pin the dispatch to Rust for every optimizer, including Adam/FTRL and
+# multiclass (Rust-side state round-trip, new in v0.5).
+# ---------------------------------------------------------------------------
+
+ES_EPOCHS = 4
+
+
+def _run_epochwise(fit, params, row_orders, opt_state, **kwargs):
+    work = params
+    for e in range(len(row_orders)):
+        work = fit(work, row_orders=row_orders[e : e + 1], **kwargs, **opt_state)
+    return work
+
+
+def _assert_state_close(opt_state, ref_state):
+    (key, slots) = next(iter(opt_state.items()))
+    for got, want in zip(slots, ref_state[key]):
+        np.testing.assert_allclose(
+            np.asarray(got, dtype=np.float64), np.asarray(want, dtype=np.float64),
+            rtol=RTOL, atol=ATOL,
+        )
+
+
+@pytest.mark.parametrize("batch_size", [1, 4])
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+def test_fm_es_epoch_handoff_bit_exact(rng, optimizer, batch_size):
+    n, d, k = 40, 10, 3
+    X = random_sparse_dense_X(rng, n, d, density=0.4)
+    y = (rng.random(n) > 0.4).astype(np.float64)
+    params = init_fm_params(rng, d, k, 0.05)
+    ro = make_row_orders(rng, n, epochs=ES_EPOCHS)
+    kwargs = dict(
+        loss="logistic", optimizer=optimizer, learning_rate=0.1,
+        l2_linear=1e-3, l2_factors=1e-3, l1_linear=1e-4, l1_factors=1e-4,
+        batch_size=batch_size,
+    )
+    full = _backend.fm_fit(X, y, params, row_orders=ro, **kwargs)
+    opt_state = make_opt_state(optimizer, *params)
+    work = _run_epochwise(
+        lambda p, **kw: _backend.fm_fit(X, y, p, **kw), params, ro, opt_state, **kwargs
+    )
+    for got, want in zip(work, full):
+        np.testing.assert_array_equal(got, want)
+    # ... and the same loop on the reference matches within parity tolerance,
+    # including the final optimizer-state contents (t counters etc.)
+    ref_state = make_opt_state(optimizer, *params)
+    ref = _run_epochwise(
+        lambda p, **kw: fm_fit_reference(X, y, p, **kw), params, ro, ref_state, **kwargs
+    )
+    _assert_params_close(work, ref)
+    _assert_state_close(opt_state, ref_state)
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+def test_ffm_es_epoch_handoff_bit_exact(rng, optimizer):
+    n, d, n_fields, k = 30, 8, 3, 2
+    X = random_sparse_dense_X(rng, n, d, density=0.5)
+    y = (rng.random(n) > 0.5).astype(np.float64)
+    field_ids = rng.integers(0, n_fields, size=d)
+    params = init_ffm_params(rng, d, n_fields, k, 0.05)
+    ro = make_row_orders(rng, n, epochs=ES_EPOCHS)
+    kwargs = dict(
+        loss="logistic", optimizer=optimizer, learning_rate=0.1,
+        l2_linear=1e-3, l2_factors=1e-3, l1_linear=1e-4, l1_factors=1e-4,
+    )
+    full = _backend.ffm_fit(X, y, field_ids, params, row_orders=ro, **kwargs)
+    opt_state = make_opt_state(optimizer, *params)
+    work = _run_epochwise(
+        lambda p, **kw: _backend.ffm_fit(X, y, field_ids, p, **kw), params, ro, opt_state, **kwargs
+    )
+    for got, want in zip(work, full):
+        np.testing.assert_array_equal(got, want)
+    ref_state = make_opt_state(optimizer, *params)
+    ref = _run_epochwise(
+        lambda p, **kw: ffm_fit_reference(X, y, field_ids, p, **kw), params, ro, ref_state, **kwargs
+    )
+    _assert_params_close(work, ref)
+    _assert_state_close(opt_state, ref_state)
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+def test_fm_multiclass_es_epoch_handoff_bit_exact(rng, optimizer):
+    n, d, k, n_classes = 36, 9, 2, 3
+    X = random_sparse_dense_X(rng, n, d, density=0.5)
+    y = rng.integers(0, n_classes, size=n)
+    params = init_fm_multiclass_params(rng, n_classes, d, k, 0.05)
+    ro = make_row_orders(rng, n, epochs=ES_EPOCHS)
+    kwargs = dict(
+        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        label_smoothing=0.05,
+    )
+    full = _backend.fm_fit_multiclass(X, y, params, row_orders=ro, **kwargs)
+    opt_state = make_opt_state(optimizer, *params)
+    work = _run_epochwise(
+        lambda p, **kw: _backend.fm_fit_multiclass(X, y, p, **kw), params, ro, opt_state, **kwargs
+    )
+    for got, want in zip(work, full):
+        np.testing.assert_array_equal(got, want)
+    ref_state = make_opt_state(optimizer, *params)
+    ref = _run_epochwise(
+        lambda p, **kw: fm_fit_multiclass_reference(X, y, p, **kw), params, ro, ref_state, **kwargs
+    )
+    _assert_params_close(work, ref)
+    _assert_state_close(opt_state, ref_state)
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+def test_ffm_multiclass_es_epoch_handoff_bit_exact(rng, optimizer):
+    n, d, n_fields, k, n_classes = 30, 8, 3, 2, 3
+    X = random_sparse_dense_X(rng, n, d, density=0.5)
+    y = rng.integers(0, n_classes, size=n)
+    field_ids = rng.integers(0, n_fields, size=d)
+    params = init_ffm_multiclass_params(rng, n_classes, d, n_fields, k, 0.05)
+    ro = make_row_orders(rng, n, epochs=ES_EPOCHS)
+    kwargs = dict(
+        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-3, l2_factors=1e-3,
+        label_smoothing=0.05,
+    )
+    full = _backend.ffm_fit_multiclass(X, y, field_ids, params, row_orders=ro, **kwargs)
+    opt_state = make_opt_state(optimizer, *params)
+    work = _run_epochwise(
+        lambda p, **kw: _backend.ffm_fit_multiclass(X, y, field_ids, p, **kw),
+        params, ro, opt_state, **kwargs,
+    )
+    for got, want in zip(work, full):
+        np.testing.assert_array_equal(got, want)
+    ref_state = make_opt_state(optimizer, *params)
+    ref = _run_epochwise(
+        lambda p, **kw: ffm_fit_multiclass_reference(X, y, field_ids, p, **kw),
+        params, ro, ref_state, **kwargs,
+    )
+    _assert_params_close(work, ref)
+    _assert_state_close(opt_state, ref_state)
+
+
+def test_state_kwargs_validated(rng):
+    """Mismatched optimizer/state combinations fail loudly (Rust mirrors the
+    reference's ValueError), never silently ignore state."""
+    n, d, k = 10, 5, 2
+    X = random_sparse_dense_X(rng, n, d)
+    y = (rng.random(n) > 0.5).astype(np.float64)
+    params = init_fm_params(rng, d, k, 0.05)
+    ro = make_row_orders(rng, n, epochs=1)
+    adam_state = make_opt_state("adam", *params)["adam_state"]
+    with pytest.raises(ValueError, match="adam_state"):
+        _backend.fm_fit(
+            X, y, params, loss="logistic", optimizer="sgd", learning_rate=0.1,
+            l2_linear=0.0, l2_factors=0.0, row_orders=ro, adam_state=adam_state,
+        )
+    bad = make_opt_state("adam", 0.0, np.zeros(d + 1), np.zeros((d + 1, k)))["adam_state"]
+    with pytest.raises(ValueError, match="adam_state shapes"):
+        _backend.fm_fit(
+            X, y, params, loss="logistic", optimizer="adam", learning_rate=0.1,
+            l2_linear=0.0, l2_factors=0.0, row_orders=ro, adam_state=bad,
+        )

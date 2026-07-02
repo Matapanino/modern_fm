@@ -12,8 +12,8 @@ Training runs in float64; learned attributes are stored in the requested
 `dtype`. Supports class_weight, sample_weight, label_smoothing (classifier),
 early stopping/eval_set, save/load, and the SGD/AdaGrad/Adam/FTRL optimizers
 (FTRL adds l1_linear/l1_factors/ftrl_beta). Early stopping supports every
-optimizer and both binary and multiclass; the Adam, FTRL, and multiclass state
-hand-offs round-trip through the NumPy reference path (see docs/roadmap.md).
+optimizer and both binary and multiclass; every per-epoch optimizer-state
+hand-off round-trips through the Rust kernel (see docs/roadmap.md).
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from .fm import (
     _combine_weights,
     _resolve_n_jobs,
     _smooth,
+    _validate_backend,
     _validate_X,
 )
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
@@ -65,8 +66,7 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
         if self.dtype not in ("float32", "float64"):
             raise ValueError(f"unknown dtype {self.dtype!r}; expected 'float32' or 'float64'")
-        if self.backend != "rust_cpu":
-            raise ValueError(f"unknown backend {self.backend!r}; only 'rust_cpu' exists in v0.1")
+        _validate_backend(self.backend)
         if not (isinstance(self.batch_size, (int, np.integer)) and self.batch_size >= 1):
             raise ValueError(f"batch_size must be a positive integer, got {self.batch_size!r}")
         _resolve_n_jobs(self.n_jobs)  # validate (raises on a bad n_jobs)
@@ -455,9 +455,8 @@ class FFMClassifier(ClassifierMixin, _FFMBase):
 
     def _fit_multiclass_es(self, X, y, field_ids, sample_weight, eval_val):
         """Epoch-by-epoch multiclass FFM fit with early stopping (softmax
-        cross-entropy metric). The Rust multiclass kernel keeps its state
-        internal, so the per-epoch optimizer-state hand-off runs on the NumPy
-        reference path (mirrors FMClassifier._fit_multiclass_es)."""
+        cross-entropy metric); the per-class optimizer state round-trips through
+        the Rust kernel (mirrors FMClassifier._fit_multiclass_es)."""
         n_rows, n_features = X.shape
         n_classes = self.classes_.shape[0]
         if not 0.0 <= self.label_smoothing < 1.0:

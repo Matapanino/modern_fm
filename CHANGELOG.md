@@ -3,6 +3,52 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **CUDA backend plumbing** (no kernels yet; docs/gpu_backend_plan.md): an
+  optional `cuda-backend` Cargo feature (cudarc with runtime dynamic loading —
+  builds need no CUDA toolkit; skipped on macOS), `_backend.has_cuda()`, and
+  `backend="cuda"` accepted by every estimator with clear errors —
+  `RuntimeError` without a CUDA build/driver/device, `NotImplementedError`
+  while no CUDA kernels exist; never a silent CPU fallback. CI gained a
+  `cuda-check` job compiling the feature on a GPU-less runner. CPU-only
+  builds, wheels and imports are unchanged.
+- **`BiInteractionPooling`** — bi-interaction pooling (He & Chua, SIGIR 2017)
+  as an sklearn transformer: fits an FM and emits the k-dim second-order
+  interaction vector `0.5 * ((Σᵢxᵢvᵢ)² − Σᵢ(xᵢvᵢ)²)` for downstream models
+  (multiclass inner FMs pool per class, concatenated). Shipped as a feature
+  transform because a linear head over it provably collapses to plain FM
+  (identity pinned at 1e-12); the FM estimators also expose
+  `bi_interaction(X)` directly. `check_estimator`-clean, Pipeline-tested.
+- **`FwFMClassifier`** — Field-weighted Factorization Machine (Pan et al.,
+  WWW 2018; `docs/math_spec_fwfm.md`): FM-shaped factors plus one learned
+  scalar weight per field pair (`r_`, upper triangle used) scaling each
+  pairwise interaction; `r_` initializes to ones so a fresh FwFM is exactly a
+  plain FM (property-tested at 1e-12). Binary logistic + multiclass softmax,
+  all four optimizers, mini-batch, early stopping / `eval_set` (bit-exact
+  four-group state hand-off through the Rust kernel), `partial_fit` /
+  `warm_start`, save/load + pickle, `check_estimator`-clean. Layered exactly
+  like FM/FFM: NumPy reference (`fwfm_predict[_naive]`,
+  `fwfm_fit[_multiclass]_reference`) → Rust kernel (`rust/src/fwfm.rs`) →
+  `_backend` dispatch → estimator, with parity tests at each layer. Training
+  is serial in v0.5 (`n_jobs` accepted, not used by FwFM).
+
+### Changed
+- **Rust early-stopping fast path**: every per-epoch optimizer-state hand-off —
+  AdaGrad accumulators, Adam moments, FTRL `(z, n)`, and the per-class
+  multiclass state — now round-trips through the Rust kernels (optional
+  `state` / `adam_state` / `ftrl_state` arguments on the fit entry points).
+  Previously, `early_stopping` / `eval_set` (and `partial_fit` / `warm_start`)
+  with Adam, FTRL, or any multiclass model trained each epoch on the NumPy
+  reference implementation. Results are unchanged — the epoch-driven loop is
+  bit-identical to a single multi-epoch Rust call (new parity tests per
+  optimizer × {FM, FFM} × {binary, multiclass}) — but ES fits are ~14–170x
+  faster in the previously reference-bound cells (synthetic bench: FFM binary
+  Adam ES 49.5 s → 0.86 s, FTRL 49.4 s → 0.29 s; FM multiclass AdaGrad ES
+  3.08 s → 0.09 s). `benchmarks/bench_synthetic.py` gained
+  `bench_early_stopping()`.
+
 ## [0.4.0] - 2026-07-02
 
 ### Added

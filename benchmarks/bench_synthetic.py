@@ -61,8 +61,34 @@ def bench_predict_throughput(n=200_000, d=500, density=0.02, k=16):
     print(f"  {t * 1e3:8.1f} ms   ({n / t / 1e6:.1f}M rows/s)")
 
 
+def bench_early_stopping(n=4000, d=200, density=0.05, epochs=10, k=8):
+    """Early-stopping fits drive the backend one epoch at a time with an
+    optimizer-state hand-off; times the whole (model × optimizer) ES grid.
+    Before v0.5 the Adam/FTRL/multiclass hand-offs fell back to the NumPy
+    reference per epoch — this benchmark demonstrates the Rust-path win."""
+    from modern_fm import FFMClassifier
+
+    X, y = make_sparse_classification(n, d, density)
+    y3 = np.digitize(X @ np.random.default_rng(2).normal(size=d), [-0.5, 0.5])
+    print(f"early-stopping fit  n={n} d={d} density={density} max_iter={epochs} k={k}")
+    for optimizer in ("adagrad", "adam", "ftrl"):
+        common = dict(
+            n_factors=k, max_iter=epochs, learning_rate=0.1, random_state=0,
+            optimizer=optimizer, early_stopping=True, patience=epochs,  # run all epochs
+        )
+        t_bin = timed(lambda: FMClassifier(**common).fit(X, y), repeats=1)
+        t_mc = timed(lambda: FMClassifier(**common).fit(X, y3), repeats=1)
+        t_ffm = timed(lambda: FFMClassifier(**common).fit(X, y), repeats=1)
+        print(
+            f"  {optimizer:8s}: FM binary {t_bin * 1e3:8.1f} ms | "
+            f"FM 3-class {t_mc * 1e3:8.1f} ms | FFM binary {t_ffm * 1e3:8.1f} ms"
+        )
+
+
 if __name__ == "__main__":
     print(f"Rust backend available: {has_rust()}\n")
     bench_fit_vs_reference()
     print()
     bench_predict_throughput()
+    print()
+    bench_early_stopping()

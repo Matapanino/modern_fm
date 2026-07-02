@@ -7,7 +7,7 @@ bit-deterministic for the idempotence checks.
 """
 
 import pytest
-from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, FMRegressor
+from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, FMRegressor, FwFMClassifier
 from sklearn.utils.estimator_checks import parametrize_with_checks
 
 _ESTIMATORS = [
@@ -15,6 +15,7 @@ _ESTIMATORS = [
     FMRegressor(max_iter=20, n_factors=4, n_jobs=1, random_state=0),
     FFMClassifier(max_iter=20, n_factors=4, n_jobs=1, random_state=0),
     FFMRegressor(max_iter=20, n_factors=4, n_jobs=1, random_state=0),
+    FwFMClassifier(max_iter=20, n_factors=4, n_jobs=1, random_state=0),
 ]
 
 # These two checks assert sample_weight=w is identical to repeating a row w
