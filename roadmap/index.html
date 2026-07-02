@@ -1,0 +1,1498 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Factorization Machines (FM/FFM/FwFM) for Python — sklearn-compatible API, Rust CPU core, optional CUDA backend.">
+      
+      
+      
+        <link rel="canonical" href="https://matapanino.github.io/modern_fm/roadmap/">
+      
+      
+        <link rel="prev" href="../compat_policy/">
+      
+      
+        <link rel="next" href="../requirements/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Roadmap - modern_fm</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#roadmap" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="modern_fm" class="md-header__button md-logo" aria-label="modern_fm" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            modern_fm
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Roadmap
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Matapanino/modern_fm" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Matapanino/modern_fm
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="modern_fm" class="md-nav__button md-logo" aria-label="modern_fm" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    modern_fm
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Matapanino/modern_fm" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Matapanino/modern_fm
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api_design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data_format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Math
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math_spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FM / FFM spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math_spec_fwfm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FwFM spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../optimization_spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU backend
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    GPU backend
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gpu_backend_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CUDA plan & status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cuda_validation_runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compat_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#v01-rust-cpu-core-current" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.1 — Rust CPU core (current)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v02-training-quality-throughput" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.2 — Training quality &amp; throughput
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v04-api-completeness-online-learning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.4 — API completeness &amp; online learning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v05-rust-es-fast-path-fwfm-pooling-cuda-plumbing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.5 — Rust ES fast path, FwFM, pooling, CUDA plumbing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v06-in-progress" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.6 — in progress
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v10-stable-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0 — stable release
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v10-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0 — criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v11-full-cuda-coverage-cuda-enabled-linux-wheels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.1 — full CUDA coverage + CUDA-enabled Linux wheels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-11-model-variants-gpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-1.1 — model variants &amp; GPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#distribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Distribution
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../requirements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Requirements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmark_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmark plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#v01-rust-cpu-core-current" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.1 — Rust CPU core (current)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v02-training-quality-throughput" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.2 — Training quality &amp; throughput
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v04-api-completeness-online-learning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.4 — API completeness &amp; online learning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v05-rust-es-fast-path-fwfm-pooling-cuda-plumbing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.5 — Rust ES fast path, FwFM, pooling, CUDA plumbing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v06-in-progress" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0.6 — in progress
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v10-stable-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0 — stable release
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v10-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0 — criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v11-full-cuda-coverage-cuda-enabled-linux-wheels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.1 — full CUDA coverage + CUDA-enabled Linux wheels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-11-model-variants-gpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-1.1 — model variants &amp; GPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#distribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Distribution
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="roadmap">Roadmap<a class="headerlink" href="#roadmap" title="Permanent link">&para;</a></h1>
+<h2 id="v01-rust-cpu-core-current">v0.1 — Rust CPU core (current)<a class="headerlink" href="#v01-rust-cpu-core-current" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[x] Phase 0: design docs + package skeleton</li>
+<li>[x] Phase 1: Python reference predictions (FM naive/fast, FFM naive/vectorized),
+      losses (logistic/softmax + label smoothing), correctness tests</li>
+<li>[x] Phase 2A: Rust prediction backend (completed 2026-06-11)</li>
+<li>toolchain updated (rustc 1.96), pyproject switched to maturin mixed layout
+    (<code>python-source = "python"</code>, module <code>modern_fm._rust</code>, pyo3 0.25 abi3-py310)</li>
+<li><code>rust/src/{lib,data,fm,ffm}.rs</code>: FM fast + FFM predictions, dense and CSR,
+    float64, GIL released during compute; input validation (CSR structure,
+    field_ids range, shape mismatches -&gt; ValueError)</li>
+<li><code>modern_fm._backend</code>: private dispatch — Rust when built, NumPy reference
+    fallback otherwise; handles dtype/contiguity coercion</li>
+<li>parity tests (<code>tests/test_rust_parity.py</code>): Rust vs reference at
+    atol/rtol 1e-12, dense + CSR, multiple seeds, zero rows, single nonzero,
+    hand-computed examples, bad-input rejection; Rust unit tests in-crate</li>
+<li>[x] Phase 2B: Rust training — SGD + AdaGrad for FM and FFM (NumPy reference
+      trainer as ground truth, parity-tested), estimators wired to the backend
+      (binary + regression), seeded reproducibility. <code>rayon</code> row-parallelism and
+      mini-batch deferred to v0.2 (n_jobs=1, batch_size=1 in v0.1).</li>
+<li>[x] Phase 3: sklearn API polish (lightweight mixins, check_is_fitted,
+      fit/predict validation) + <code>CategoricalEncoder</code>. Full sklearn
+      <code>check_estimator</code> compliance deferred to v0.2 (no sklearn runtime dep).</li>
+<li>[x] Phase 4: early_stopping/eval_set, label_smoothing, class_weight,
+      sample_weight, multiclass softmax (FM), save/load, examples + benchmark.</li>
+</ul>
+<h2 id="v02-training-quality-throughput">v0.2 — Training quality &amp; throughput<a class="headerlink" href="#v02-training-quality-throughput" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[x] Adam optimizer (<code>optimizer="adam"</code>, per-parameter lazy Adam with
+  <code>beta_1</code>/<code>beta_2</code>/<code>epsilon</code>); FM binary/multiclass + FFM, parity-tested vs the
+  NumPy reference. Adam + early stopping is deferred (moments are not round-tripped).</li>
+<li>[x] FTRL-Proximal optimizer (<code>optimizer="ftrl"</code>, <code>l1_linear</code>/<code>l1_factors</code>/
+  <code>ftrl_beta</code>): per-coordinate <code>(z, n)</code> state with L1/L2 folded into the update;
+  FM binary/multiclass + FFM, parity-tested vs the NumPy reference; L1 yields exact
+  zeros (composes with mini-batch + n_jobs; FTRL + early stopping deferred)</li>
+<li>[x] Rust multiclass-softmax training kernel (<code>fm_fit_multiclass_csr</code>),
+  parity-tested vs the NumPy reference (done ahead of v0.2)</li>
+<li>[x] mini-batch (<code>batch_size &gt; 1</code>): per-batch gradient averaging with one update
+  per touched coordinate (FM binary/multiclass + FFM), parity-tested vs the NumPy
+  reference at batch_size ∈ {1, 4, full}; batch_size=1 stays the per-row path</li>
+<li>[x] <code>rayon</code> row-parallelism (<code>n_jobs &gt; 1</code>): deterministic parallel-accumulate /
+  serial-apply per batch (FM binary + FFM; multiclass serial); <code>n_jobs=1</code> matches
+  the reference, <code>n_jobs&gt;1</code> reproducible per thread count. ~3x on 4 cores for FFM.</li>
+<li>[x] full sklearn <code>check_estimator</code> compatibility (estimators subclass sklearn
+  <code>BaseEstimator</code> + <code>Classifier</code>/<code>RegressorMixin</code>; scikit-learn is now a runtime
+  dependency). <code>FFMClassifier.fit(X, y)</code> defaults <code>field_ids</code> to per-column.</li>
+<li>[x] libffm format loader/exporter (<code>load_libffm</code> / <code>dump_libffm</code>, round-trip tested)</li>
+<li>[x] pandas/polars input (DataFrames via sklearn <code>validate_data</code>;
+  <code>feature_names_in_</code> recorded, column reorder rejected at predict)</li>
+<li>[x] CI + release pipeline: <code>.github/workflows/ci.yml</code> (pytest + ruff across
+  {Linux, macOS, Windows} × py3.10–3.13, plus cargo test/clippy) and
+  <code>release.yml</code> (abi3 wheels via maturin-action + sdist, PyPI trusted publishing
+  on a <code>v*</code> tag). Verified locally: maturin builds an abi3 wheel + sdist that
+  install and run in a clean venv.</li>
+<li>[x] Adam + early stopping: moments round-tripped across epochs via the NumPy
+  reference path (<code>fm_fit_reference</code>'s <code>adam_state</code>); FM binary/regression + FFM,
+  per-epoch hand-off equals one multi-epoch call exactly.</li>
+<li>[x] multiclass + early stopping: per-class optimizer state (AdaGrad/Adam)
+  round-tripped via the reference path; softmax cross-entropy eval metric,
+  round-trip equals a single multi-epoch call.</li>
+<li>[x] FFM multiclass softmax (<code>ffm_fit_multiclass_csr</code>): one FFM per class coupled
+  by softmax, all optimizers (SGD/AdaGrad/Adam/FTRL) + mini-batch, parity-tested
+  vs the NumPy reference; <code>FFMClassifier</code> auto-detects &gt;2 classes / <code>loss="softmax"</code>.
+  FTRL + early stopping and multiclass FFM + early stopping are scheduled for v0.4 (see below).</li>
+</ul>
+<h2 id="v04-api-completeness-online-learning">v0.4 — API completeness &amp; online learning<a class="headerlink" href="#v04-api-completeness-online-learning" title="Permanent link">&para;</a></h2>
+<p>Closes the (model × task × optimizer × early-stopping) matrix and adds
+streaming / out-of-core training. No new model family, no release-infra work.</p>
+<ul>
+<li>[x] <strong>FFMRegressor</strong> — squared-loss FFM, the regression counterpart to
+  <code>FMRegressor</code>. <em>Priority: P0.</em></li>
+<li>DoD: <code>RegressorMixin</code> estimator; Rust kernel + NumPy-reference parity test
+    (atol/rtol like existing FFM tests); dense+CSR equivalence; save/load +
+    pickle round-trip; <code>check_estimator</code> passes; exported in <code>__all__</code>;
+    <code>docs/api_design.md</code> + CHANGELOG updated. <code>_reference*.py</code> unchanged.</li>
+<li>[x] <strong>FTRL + early stopping</strong> — round-trip FTRL's per-coordinate <code>(z, n)</code>
+  state across epochs (mirror Adam's <code>adam_state</code> hand-off). <em>Priority: P1.</em></li>
+<li>DoD: remove the <code>_no_ftrl_early_stopping</code> guard (fm.py/ffm.py); per-epoch
+    hand-off equals one multi-epoch call exactly (test); FM binary/multiclass +
+    FFM; state carried via the reference path (no <code>_reference*.py</code> speed change).</li>
+<li>[x] <strong>Multiclass FFM + early stopping</strong> — per-class optimizer state
+  round-tripped for FFM multiclass (mirror FM-multiclass + ES). <em>Priority: P1.</em></li>
+<li>DoD: remove the multiclass guard in <code>ffm.py</code>; round-trip equals a single
+    multi-epoch call (test); softmax cross-entropy eval metric.</li>
+<li>[x] <strong>partial_fit + warm_start</strong> — incremental/streaming training for FM &amp; FFM.
+  <em>Priority: P0.</em></li>
+<li>DoD: <code>partial_fit(X, y, classes=...)</code> (sklearn first-call <code>classes</code>
+    convention) and <code>warm_start=True</code> continue from existing params + optimizer
+    state; <code>classes_</code> retained; N sequential <code>partial_fit</code> calls equal one <code>fit</code>
+    on the concatenated data under a matched epoch/batch schedule (exact via
+    optimizer-state round-trip); contract added to <code>docs/api_design.md</code>;
+    reference parity preserved; CHANGELOG updated.</li>
+</ul>
+<h2 id="v05-rust-es-fast-path-fwfm-pooling-cuda-plumbing">v0.5 — Rust ES fast path, FwFM, pooling, CUDA plumbing<a class="headerlink" href="#v05-rust-es-fast-path-fwfm-pooling-cuda-plumbing" title="Permanent link">&para;</a></h2>
+<p>Performance completion of the early-stopping matrix, the v1.0 headline model
+pulled forward, a research-honest <code>nfm_pooling</code>, and locally-testable CUDA
+groundwork (kernels land separately, gated on real-GPU validation — see
+<code>docs/gpu_backend_plan.md</code>).</p>
+<ul>
+<li>[x] <strong>Rust early-stopping fast path</strong> — every per-epoch optimizer-state
+  hand-off (AdaGrad accumulators, Adam moments, FTRL <code>(z, n)</code>, per-class
+  multiclass state) now round-trips through the Rust kernels via optional
+  <code>state</code>/<code>adam_state</code>/<code>ftrl_state</code> PyO3 arguments; <code>_backend</code> dispatches to
+  the reference only when the extension is missing. The epoch-driven ES loop
+  is bit-identical to a single multi-epoch Rust call (tested per optimizer ×
+  {FM, FFM} × {binary, multiclass}). ES fits sped up ~14–170x for the
+  previously reference-bound cells (Adam/FTRL/multiclass; FFM+Adam ES
+  49.5 s → 0.86 s on the synthetic bench); <code>partial_fit</code>/<code>warm_start</code> ride the
+  same path. <em>Priority: P0.</em></li>
+<li>[x] <strong>FwFM (<code>FwFMClassifier</code>)</strong> — Field-weighted FM (moved up from v1.0; it
+  remains the 1.0 headline). <em>Priority: P0.</em></li>
+<li>DoD met: <code>docs/math_spec_fwfm.md</code> written FIRST (field-pair weights
+    <code>r_{f(i),f(j)}</code> upper-triangle, exact prediction/gradients/updates, R=ones
+    init = plain FM); NumPy reference → Rust kernel (<code>rust/src/fwfm.rs</code>) →
+    <code>FwFMClassifier</code>, parity-tested at each layer (predict 1e-12, train
+    RTOL=1e-9 × optimizer × loss × batch_size, multiclass, ES bit-exact
+    hand-off); collapse-to-FM property test; existing FM/FFM formulas
+    untouched; <code>check_estimator</code>, save/load, <code>partial_fit</code>/<code>warm_start</code>,
+    <code>__all__</code> + api_design + CHANGELOG. Binary + multiclass; serial (rayon
+    <code>n_jobs</code> for FwFM deferred). (AFM/FEFM/FmFM follow this template post-1.0;
+    FmFM is the research-recommended next variant — one field-pair k×k matrix
+    generalizes FM/FwFM/FvFM/FmFM.)</li>
+<li>[x] <strong>Bi-interaction pooling (<code>BiInteractionPooling</code>)</strong> — the honest
+  "nfm_pooling": a sklearn transformer emitting the k-dim bi-interaction
+  vector <code>0.5 * ((sum_i x_i v_i)^2 - sum_i (x_i v_i)^2)</code> from a fitted FM for
+  downstream models. As a <em>predictor</em> a linear head over this provably
+  collapses to plain FM (NFM = this + MLP, out of scope), so it ships as a
+  feature transform, not a model. <em>Priority: P1.</em></li>
+<li>DoD met: <code>_reference.fm_bi_interaction</code> (+ <code>_backend.fm_bi_interaction</code>
+    wrapper; no Rust kernel — NumPy is two BLAS-grade sparse matmuls),
+    <code>BiInteractionPooling</code> with <code>fit</code>/<code>transform</code>/<code>get_feature_names_out</code>
+    (+ <code>bi_interaction(X)</code> on the FM estimators), collapse-to-FM identity
+    test at 1e-12, Pipeline + <code>check_estimator</code> + pickle tests, api_design
+    docs.</li>
+<li>[x] <strong>CUDA plumbing (no kernels)</strong> — <code>cuda-backend</code> Cargo feature (cudarc
+  0.19, default <code>fallback-dynamic-loading</code> = no CUDA toolkit at build time;
+  target-gated off on macOS), <code>rust/src/cuda/mod.rs</code> <code>available()</code>, always-
+  registered <code>has_cuda()</code> pyfunction, <code>_backend.has_cuda()</code>,
+  <code>backend="cuda"</code> accepted at fit with clear errors (RuntimeError without a
+  CUDA build/device, NotImplementedError while no kernels exist — never a
+  silent CPU fallback), CI <code>cuda-check</code> job (<code>cargo check/clippy --features
+  cuda-backend</code>, in the <code>ci-success</code> gate). Kernels (FM CSR prediction
+  first) follow in a separate PR that merges only after validation on a real
+  GPU (runbook in the PR). <em>Priority: P2.</em></li>
+</ul>
+<h2 id="v06-in-progress">v0.6 — in progress<a class="headerlink" href="#v06-in-progress" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[x] <strong>CUDA FFM prediction + context/module cache</strong> (gpu_backend_plan
+  milestone 2, pulled ahead of the post-1.0 GPU track): FFM CSR prediction
+  kernel (<code>rust/src/cuda/ffm.rs</code>, one block/row, 256-thread pair-strided
+  loop, no row-nnz/k limit; <code>FFMClassifier</code> binary+multiclass and
+  <code>FFMRegressor</code> inference via <code>set_params(backend="cuda")</code>), plus a
+  process-wide cache of the CUDA context + NVRTC module
+  (<code>rust/src/cuda/mod.rs</code>) so only the first call pays initialization.
+  Parity rtol/atol 1e-10, T4-validated per <code>docs/cuda_validation_runbook.md</code>;
+  <code>bench_cuda.py</code> gained the FFM grid + a cold-start line. FwFM-CUDA and
+  device-resident parameters remain out of scope.</li>
+<li>[x] <strong>CUDA FM training accumulation</strong> (gpu_backend_plan milestone 3):
+  binary/regression FM fit with <code>backend="cuda"</code> — GPU accumulates each
+  mini-batch's data-gradient (dense buffers, <code>atomicAdd</code>, CSR uploaded once
+  per call), the untouched CPU flush applies SGD/AdaGrad/Adam/FTRL, so early
+  stopping, <code>partial_fit</code>, <code>warm_start</code> and FTRL's exact L1 zeros work
+  unchanged. Multiclass/FwFM training still raise. Nondeterministic
+  run-to-run (atomics); parity on final predictions at rtol 1e-7/atol 1e-8;
+  requires compute &gt;= 6.0. Perf follow-ups shipped: device-resident
+  parameters + per-batch compact-vs-dense transfer switch
+  (<code>2 * batch_nnz &lt; n_features</code>).</li>
+<li>[x] <strong>CUDA FFM training accumulation</strong> (gpu_backend_plan milestone 4):
+  binary/regression FFM fit with <code>backend="cuda"</code>
+  (<code>rust/src/cuda/ffm_train.rs</code>) — dense slot-gradient device buffer, host
+  touched-slot enumeration (pair loop minus the k-dot), gather/scatter
+  kernels so V stays device-resident and only touched (feature, field)
+  slots move; CPU flush reused verbatim (all optimizers + ES +
+  partial_fit/warm_start + FTRL L1 zeros). Same caveats as the FM path.</li>
+</ul>
+<h2 id="v10-stable-release">v1.0 — stable release<a class="headerlink" href="#v10-stable-release" title="Permanent link">&para;</a></h2>
+<p>Headline model variant + production-CTR features + docs/bench polish + API
+freeze. Shipping this milestone = tagging v1.0.0.</p>
+<ul>
+<li>[ ] <strong>FwFM</strong> — pulled into v0.5 (see above); the v1.0 gate keeps its DoD.</li>
+<li>[x] <strong>Probability calibration</strong> — calibrated <code>predict_proba</code> for CTR.
+  <em>Priority: P1.</em></li>
+<li>DoD met via the recommended path: every public classifier is
+    <code>CalibratedClassifierCV</code>-compatible (no library-specific API);
+    <code>tests/test_calibration.py</code> pins ECE + Brier improvement on synthetic
+    miscalibrated data (label-smoothing compression, sigmoid + isotonic) and
+    compatibility for FM/FFM/FwFM; <code>examples/calibration.py</code> +
+    <code>docs/api_design.md</code> "Probability calibration" section.</li>
+<li>[x] <strong>Model inspection (top interactions)</strong> — strongest learned pairwise
+  interactions. <em>Priority: P1.</em></li>
+<li>DoD met: <code>top_interactions(n_top, class_idx=None)</code> on all five
+    estimators (FM <code>|&lt;v_i, v_j&gt;|</code>, FwFM r-weighted, FFM field-aware slots;
+    exact blockwise scan in <code>python/modern_fm/_inspect.py</code>); planted
+    dominant-pair tests + blockwise-vs-naive parity
+    (<code>tests/test_top_interactions.py</code>); <code>examples/top_interactions.py</code> +
+    api_design section.</li>
+<li>[x] <strong>Real-data benchmark</strong> — real CTR sample. <em>Priority: P1.</em></li>
+<li>DoD met with a substitution, documented in the script: the Criteo/Avazu
+    samples are no longer publicly downloadable without credentials (checked
+    2026-07: labs.criteo.com redirects, the S3 mirror 404s, the HF copy is
+    gated), so <code>benchmarks/bench_criteo_like.py</code> uses the real KDD Cup 2012
+    track-2 CTR sample from OpenML (<code>Click_prediction_small</code>, zero-credential
+    <code>fetch_openml</code>). 200k rows / 373k one-hot features / 9 fields, fixed seed,
+    stratified split, libFM-style fixed hyperparameters + built-in early
+    stopping (no tuning-to-benchmark); README table with AUC + fit time +
+    machine specs (honest result: factor models match, not beat, LR on this
+    singleton-heavy sample; FwFM closest at 0.6891 vs LR 0.6908).</li>
+<li>[x] <strong>Documentation site</strong> — published API/usage docs. <em>Priority: P1.</em></li>
+<li>DoD met: mkdocs-material (<code>mkdocs.yml</code> + <code>docs/index.md</code> with install +
+    quickstart + model table; nav covers the API reference, data format, math
+    specs, GPU backend and project docs; examples linked);
+    <code>.github/workflows/docs.yml</code> auto-deploys to GitHub Pages (<code>gh-pages</code>
+    branch) on pushes to main touching docs; README links the site
+    (https://matapanino.github.io/modern_fm/). One-time repo setting after
+    the first deploy: Pages -&gt; deploy from branch <code>gh-pages</code>.</li>
+<li>[x] <strong>API freeze + backward-compat policy</strong> — <em>Priority: P0.</em></li>
+<li>DoD met: <code>__all__</code> audited (5 estimators + pooling + encoder +
+    <code>NotFittedError</code> + libffm I/O + <code>__version__</code>); every public constructor
+    param verified present in <code>docs/api_design.md</code> by an inspect-based sweep
+    (<code>CategoricalEncoder</code>/libffm section added — the one gap); SemVer +
+    backward-compat policy written (<code>docs/compat_policy.md</code>, in the docs-site
+    nav); <code>save_model</code> carries <code>format_version</code> and <code>load_model</code> now rejects
+    newer-format files with a clear upgrade error (tested); the one stale
+    <code>NotImplementedError</code> (dead <code>_check_binary_classes</code> claiming multiclass
+    is unsupported) removed — the remaining <code>NotImplementedError</code> surface is
+    exactly the documented CUDA cell guards.</li>
+<li>[x] <strong>Release 1.0.0</strong> — <em>Priority: P0.</em></li>
+<li>DoD met: version <code>1.0.0</code> in <code>__init__.py</code> / <code>pyproject.toml</code> /
+    <code>Cargo.toml</code> (+ <code>Cargo.lock</code>); CHANGELOG <code>1.0.0</code> entry (Unreleased
+    folded in); full CI matrix green on the release PR; tag <code>v1.0.0</code> →
+    trusted-publishing <code>release.yml</code> (wheels + sdist to PyPI).</li>
+</ul>
+<h2 id="v10-criteria">v1.0 — criteria<a class="headerlink" href="#v10-criteria" title="Permanent link">&para;</a></h2>
+<p>The release is "stable" only when all of these hold (the global gate; the
+per-item DoDs above are the local checks):</p>
+<ol>
+<li><strong>Feature-matrix completeness</strong> — every documented cell of
+   (model {FM, FFM} × task {regression, binary, multiclass} × optimizer
+   {sgd, adagrad, adam, ftrl} × early-stopping) works, or is <em>intentionally and
+   visibly documented</em> as out-of-scope. No surprise <code>NotImplementedError</code> in the
+   public surface (FFMRegressor, FTRL+ES, multiclass-FFM+ES all closed).</li>
+<li><strong>Reference parity</strong> — every fast/Rust path proven equal to the NumPy
+   reference; <code>_reference*.py</code> never changed for speed (CLAUDE.md rule, now a
+   release gate).</li>
+<li><strong>Numerical stability</strong> — no inf/nan at extreme logits (logsumexp/log1p),
+   tested.</li>
+<li><strong>Reproducibility</strong> — identical results under a fixed <code>random_state</code> across
+   the supported matrix.</li>
+<li><strong>Serialization stability</strong> — <code>save_model</code>/<code>load_model</code> + pickle round-trip
+   preserve predictions; on-disk format carries a version tag.</li>
+<li><strong>sklearn compatibility</strong> — <code>check_estimator</code> passes for every public
+   estimator; works in <code>Pipeline</code> / <code>GridSearchCV</code> / <code>clone</code>.</li>
+<li><strong>API frozen &amp; documented</strong> — <code>__all__</code> audited; every public param in
+   <code>docs/api_design.md</code>; a written backward-compatibility / SemVer policy.</li>
+<li><strong>Quality gates green</strong> — <code>pytest</code> green + <code>ruff</code> clean across the CI matrix
+   (3 OS × py3.10–3.13); <code>cargo test</code> + <code>cargo clippy</code> warning-free.</li>
+<li><strong>Docs site live</strong> — GitHub Pages: install, quickstart, API reference, math
+   specs, examples.</li>
+<li><strong>Real-data evidence</strong> — Criteo/Avazu-sample AUC + timing in the README.</li>
+<li><strong>Production CTR features</strong> — calibrated <code>predict_proba</code> + top-interaction
+    inspection shipped.</li>
+<li><strong>Released</strong> — version <code>1.0.0</code>, CHANGELOG complete, <code>v1.0.0</code> tag published.</li>
+</ol>
+<h2 id="v11-full-cuda-coverage-cuda-enabled-linux-wheels">v1.1 — full CUDA coverage + CUDA-enabled Linux wheels<a class="headerlink" href="#v11-full-cuda-coverage-cuda-enabled-linux-wheels" title="Permanent link">&para;</a></h2>
+<p>Shipped 2026-07-02 (additive minor under <code>docs/compat_policy.md</code>):</p>
+<ul>
+<li><strong>CUDA multiclass (softmax) training for FM and FFM</strong>
+  (gpu_backend_plan milestone 5): GPU per-class batch accumulation with the
+  softmax computed in-kernel in CPU class order; the untouched CPU flush runs
+  per class via <code>McState::class_views</code>, so every optimizer, ES and
+  <code>partial_fit</code> ride through. FFM uses a two-kernel design so one
+  class-sized dense gv buffer serves all classes.</li>
+<li><strong>FwFM CUDA — prediction + binary/regression + multiclass training</strong>
+  (milestone 6): new prediction kernel (FFM geometry, FM-shaped V, R pair
+  weights) and training kernels (compact feature slots + dense <code>n_fields²</code>
+  gr); the R group flushes through <code>GroupStateMut</code>/<code>McGroupState</code> unchanged.
+  With this, <strong>every prediction and training cell is CUDA-covered</strong> and the
+  per-cell <code>NotImplementedError</code> guards are gone.</li>
+<li><strong>CUDA-ready Linux wheels</strong>: <code>pip install modern-fm</code> on Linux now ships the
+  <code>cuda-backend</code> feature (cudarc <code>dynamic-loading</code> pinned — nothing links
+  libcuda, manylinux-clean); <code>backend="cuda"</code> works on Colab/Kaggle GPU
+  runtimes without a source build. Gated in CI (<code>cuda-wheel</code>) and in the
+  release workflow (<code>linux-wheel-check</code>: CPU-only import, <code>has_cuda() is
+  False</code>, full suite, auditwheel).</li>
+</ul>
+<h2 id="post-11-model-variants-gpu">Post-1.1 — model variants &amp; GPU<a class="headerlink" href="#post-11-model-variants-gpu" title="Permanent link">&para;</a></h2>
+<ul>
+<li>AFM, FEFM/FmFM (each gets its own math spec first, per the FwFM template)</li>
+<li>pairwise dropout, interaction pruning</li>
+<li>PyTorch-compatible backend prototype</li>
+<li>GPU optimizer flush; stacked-gv fast path for small-C FFM multiclass</li>
+<li>cuML-style <code>device=</code> switch investigation</li>
+</ul>
+<h2 id="distribution">Distribution<a class="headerlink" href="#distribution" title="Permanent link">&para;</a></h2>
+<ul>
+<li>PyPI name: <code>modern-fm</code> (availability confirmed 2026-06-11)</li>
+<li>wheels via maturin + cibuildwheel once Rust backend lands</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

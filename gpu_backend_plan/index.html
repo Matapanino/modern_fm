@@ -1,0 +1,1873 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Factorization Machines (FM/FFM/FwFM) for Python — sklearn-compatible API, Rust CPU core, optional CUDA backend.">
+      
+      
+      
+        <link rel="canonical" href="https://matapanino.github.io/modern_fm/gpu_backend_plan/">
+      
+      
+        <link rel="prev" href="../optimization_spec/">
+      
+      
+        <link rel="next" href="../cuda_validation_runbook/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>CUDA plan & status - modern_fm</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cuda-backend-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="modern_fm" class="md-header__button md-logo" aria-label="modern_fm" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            modern_fm
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CUDA plan & status
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Matapanino/modern_fm" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Matapanino/modern_fm
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="modern_fm" class="md-nav__button md-logo" aria-label="modern_fm" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    modern_fm
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Matapanino/modern_fm" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Matapanino/modern_fm
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api_design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data_format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Math
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math_spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FM / FFM spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math_spec_fwfm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FwFM spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../optimization_spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU backend
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    GPU backend
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CUDA plan & status
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CUDA plan & status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#executive-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executive Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-backend-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Backend Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceleration-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceleration Targets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Acceleration Targets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fm-prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FM Prediction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ffm-prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FFM Prediction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#training-accumulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training Accumulation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommended-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommended Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backend-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend Selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rust Layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kernel-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel Strategy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Kernel Strategy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fm-csr-prediction-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FM CSR Prediction v1
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ffm-csr-prediction-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FFM CSR Prediction v1
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#training-accumulation-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training Accumulation v1
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-and-packaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API And Packaging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-and-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing And Benchmarks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing And Benchmarks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#correctness-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correctness Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benchmark-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmark Script
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#research-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Research Notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#claude-code-prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude Code Prompt
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cuda_validation_runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compat_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../requirements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Requirements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmark_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmark plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#executive-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executive Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-backend-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Backend Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceleration-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceleration Targets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Acceleration Targets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fm-prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FM Prediction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ffm-prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FFM Prediction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#training-accumulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training Accumulation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommended-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommended Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backend-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend Selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rust Layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kernel-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel Strategy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Kernel Strategy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fm-csr-prediction-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FM CSR Prediction v1
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ffm-csr-prediction-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FFM CSR Prediction v1
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#training-accumulation-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training Accumulation v1
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-and-packaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API And Packaging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-and-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing And Benchmarks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing And Benchmarks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#correctness-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correctness Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benchmark-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmark Script
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#research-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Research Notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#claude-code-prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Claude Code Prompt
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cuda-backend-plan">CUDA Backend Plan<a class="headerlink" href="#cuda-backend-plan" title="Permanent link">&para;</a></h1>
+<p>This document is an implementation brief for adding optional GPU acceleration to
+<code>modern_fm</code>. It is deliberately CUDA-first: the current library is optimized
+around sparse CSR data, PyO3/Rust kernels, and sklearn-style Python estimators,
+and NVIDIA CUDA is the most practical path to a real speedup without replacing
+the package with a deep-learning framework.</p>
+<h2 id="executive-summary">Executive Summary<a class="headerlink" href="#executive-summary" title="Permanent link">&para;</a></h2>
+<p>Keep the Rust CPU backend as the default and add CUDA as an optional backend.
+The first CUDA milestone should accelerate prediction, then binary/regression
+mini-batch gradient accumulation. Do not attempt a complete GPU rewrite first.</p>
+<p>Recommended order:</p>
+<ol>
+<li>FM CSR prediction. — <strong>done (v0.5.0)</strong></li>
+<li>FFM CSR prediction. — <strong>done (unreleased, v0.6 work)</strong></li>
+<li>FM binary/regression mini-batch gradient accumulation. — <strong>done
+   (unreleased, v0.6 work):</strong> <code>atomicAdd</code> accumulation
+   (<code>rust/src/cuda/fm_train.rs</code>), CPU optimizer flush reused verbatim, so all
+   four optimizers + early stopping + <code>partial_fit</code>/<code>warm_start</code> work;
+   requires compute capability &gt;= 6.0 (double <code>atomicAdd</code>); nondeterministic
+   run-to-run — parity is tolerance-based on final predictions. The plan-doc
+   performance follow-ups are in: parameters are device-resident for the
+   whole fit call, and per batch the transfers switch between compact
+   touched-coordinate gradient buffers + touched-parameter scatter-back
+   (when <code>2 * batch_nnz &lt; n_features</code>) and full dense buffers (large/full
+   batches).</li>
+<li>FFM binary/regression mini-batch gradient accumulation. — <strong>done
+   (unreleased, v0.6 work):</strong> <code>rust/src/cuda/ffm_train.rs</code> — dense
+   slot-gradient buffer on device, host enumerates each batch's touched
+   (feature, field) slots (pair loop without the k-dot, ~k× cheaper than the
+   accumulation it replaces), gather kernel packs + re-zeroes only touched
+   slots, CPU flush reused verbatim, scatter kernel syncs V (device-resident)
+   back. Same optimizer/ES/partial_fit coverage and caveats as the FM path.</li>
+<li>FM + FFM multiclass (softmax) mini-batch gradient accumulation. — <strong>done
+   (v1.1 work):</strong> <code>rust/src/cuda/fm_train_mc.rs</code> + <code>ffm_train_mc.rs</code>. One
+   kernel scores all C classes per row from the frozen batch-start
+   parameters, replicates the CPU's stable softmax in class order (thread 0)
+   with label-smoothed targets, and accumulates per-class gradients; the
+   untouched CPU flush runs per class over <code>McState::class_views</code>, so all
+   four optimizers, early stopping and <code>partial_fit</code> ride through. The
+   touched set is shared across classes (one slot map serves all C). FM
+   stacks compact <code>(C, T)</code> gradient buffers; FFM splits score/softmax from
+   pair accumulation so ONE class-sized dense gv buffer serves every class
+   (VRAM stays parameters + 1×V-per-class, not C×). Device-resident
+   parameters scatter back per class (<code>fm_scatter_params</code> feature base
+   <code>c * n</code>; <code>ffm_scatter_slots</code> slot base <code>c * n * n_fields</code>). Same
+   nondeterminism/parity caveats as the binary paths. VRAM sizing: the
+   resident parameters alone are <code>C * n * (k + 1)</code> doubles (FM) /
+   <code>C * n * (n_fields * k + 1)</code> doubles (FFM) — e.g. FFM n=1e6, F=10, k=8,
+   C=10 ≈ 6.5 GB; allocation failures surface as clear <code>RuntimeError</code>s.</li>
+<li>FwFM prediction + binary/regression + multiclass training. — <strong>done
+   (v1.1 work):</strong> <code>rust/src/cuda/fwfm.rs</code> (prediction: FFM kernel geometry
+   with FM-shaped V and the R pair weight) + <code>fwfm_train.rs</code> (training:
+   FFM-style strided pair loops over FM-style compact feature slots — both
+   pair endpoints are row nonzeros, so the per-nonzero slot map covers every
+   gv write; <code>gr</code> is a dense <code>n_fields^2</code> buffer, memset per batch and
+   downloaded in full; multiclass follows the FM milestone-5 pattern with
+   C-stacked buffers + dense <code>(C, F, F)</code> gr). The CPU flush — including the
+   R group (<code>GroupStateMut</code>/<code>McGroupState</code>) — is reused verbatim, so every
+   optimizer, R regularization, ES and <code>partial_fit</code> ride through. With this
+   milestone <strong>every prediction and training cell is CUDA-covered</strong>.</li>
+<li>Later: optimizer flush on GPU.</li>
+</ol>
+<p>The first target should be large sparse CTR-style batches. Small batches,
+<code>batch_size=1</code>, and small dense toy inputs should stay on CPU because kernel
+launch and host/device transfer costs will dominate.</p>
+<h2 id="current-backend-shape">Current Backend Shape<a class="headerlink" href="#current-backend-shape" title="Permanent link">&para;</a></h2>
+<p>The public estimators already expose <code>backend="rust_cpu"</code> in
+<code>docs/api_design.md</code>, while private dispatch lives in <code>python/modern_fm/_backend.py</code>.
+The optimized kernels are in Rust and use float64 CSR triples at the PyO3
+boundary:</p>
+<ul>
+<li>FM score and training: <code>rust/src/fm.rs</code>.</li>
+<li>FFM score and training: <code>rust/src/ffm.rs</code>.</li>
+<li>PyO3 bindings and validation: <code>rust/src/lib.rs</code>.</li>
+<li>Optimizer state and update formulas: <code>rust/src/optimizer.rs</code>.</li>
+<li>CSR validation/view: <code>rust/src/data.rs</code>.</li>
+</ul>
+<p>The current training contract is "parallel accumulate, serial apply":</p>
+<ul>
+<li>Rows in a mini-batch are scored against frozen batch-start parameters.</li>
+<li>Data gradients are accumulated per touched coordinate.</li>
+<li>One optimizer step is applied per touched coordinate at batch end.</li>
+<li><code>n_jobs&gt;1</code> only changes row-gradient summation order; CPU reproducibility is
+  still controlled and parity-tested.</li>
+</ul>
+<p>That contract is GPU-friendly for the accumulation phase, but not for bit-exact
+results. CUDA reductions and atomics will change floating-point ordering, so
+CUDA parity should be tolerance-based rather than bit-for-bit.</p>
+<h2 id="acceleration-targets">Acceleration Targets<a class="headerlink" href="#acceleration-targets" title="Permanent link">&para;</a></h2>
+<h3 id="fm-prediction">FM Prediction<a class="headerlink" href="#fm-prediction" title="Permanent link">&para;</a></h3>
+<p>FM prediction is:</p>
+<div class="highlight"><pre><span></span><code>s = w0 + sum_i w_i x_i
+  + 0.5 * sum_f [(sum_i V[i,f] x_i)^2 - sum_i (V[i,f] x_i)^2]
+</code></pre></div>
+<p>For CSR input this is <code>O(nnz * k)</code>. It maps naturally to a CUDA kernel where a
+row/block computes:</p>
+<ul>
+<li>linear term over row nonzeros;</li>
+<li>factor cache <code>sum_f</code> and <code>sum_sq_f</code>;</li>
+<li>final pairwise reduction over <code>k</code>.</li>
+</ul>
+<p>This is the safest first kernel because it has no optimizer state and only
+writes one score per row.</p>
+<h3 id="ffm-prediction">FFM Prediction<a class="headerlink" href="#ffm-prediction" title="Permanent link">&para;</a></h3>
+<p>FFM prediction is:</p>
+<div class="highlight"><pre><span></span><code>s = w0 + sum_i w_i x_i
+  + sum_{i&lt;j} &lt;V[i, field(j)], V[j, field(i)]&gt; x_i x_j
+</code></pre></div>
+<p>For a row with <code>z</code> nonzeros this is <code>O(z^2 * k)</code>, so it has higher arithmetic
+intensity than FM and should benefit more on wide one-hot field data. It also
+has more irregular memory access. Start with one block per row or one warp per
+feature-pair tile, then profile.</p>
+<h3 id="training-accumulation">Training Accumulation<a class="headerlink" href="#training-accumulation" title="Permanent link">&para;</a></h3>
+<p>Training is harder because many rows update the same feature coordinates. For
+v1, move only the data-gradient accumulation to CUDA and copy the batch
+accumulator back to CPU for the existing serial optimizer flush.</p>
+<p>That keeps the optimizer implementation and state exact on the CPU side, while
+still offloading the row-heavy scoring and gradient math.</p>
+<p>Do not move the optimizer flush first. A sparse touched-coordinate optimizer on
+GPU needs careful scatter/gather, duplicate coordination, and deterministic
+state semantics across SGD/AdaGrad/Adam/FTRL.</p>
+<h2 id="recommended-architecture">Recommended Architecture<a class="headerlink" href="#recommended-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="backend-selection">Backend Selection<a class="headerlink" href="#backend-selection" title="Permanent link">&para;</a></h3>
+<p>Keep <code>rust_cpu</code> as the default. Add CUDA behind explicit optional plumbing:</p>
+<div class="highlight"><pre><span></span><code><span class="n">FMClassifier</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;rust_cpu&quot;</span><span class="p">)</span>  <span class="c1"># default</span>
+<span class="n">FMClassifier</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>      <span class="c1"># require CUDA, fail clearly if missing</span>
+<span class="n">FMClassifier</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">)</span>      <span class="c1"># optional later: CUDA if available else CPU</span>
+</code></pre></div>
+<p>Initial implementation may accept only <code>backend="rust_cpu" | "cuda"</code> to avoid
+ambiguous performance behavior. If <code>backend="cuda"</code> is requested and CUDA is not
+available, raise a clear backend error rather than silently falling back.</p>
+<h3 id="rust-layout">Rust Layout<a class="headerlink" href="#rust-layout" title="Permanent link">&para;</a></h3>
+<p>Use a feature-gated CUDA module so standard wheels stay CPU-only:</p>
+<div class="highlight"><pre><span></span><code>rust/src/cuda/mod.rs
+rust/src/cuda/fm.rs
+rust/src/cuda/ffm.rs
+rust/src/cuda/kernels/*.cu or embedded NVRTC strings
+</code></pre></div>
+<p>Recommended crate approach:</p>
+<ul>
+<li>Use <code>cudarc</code> because it provides Rust wrappers for the CUDA Driver API, NVRTC,
+  cuBLAS, cuSPARSE, and dynamic loading.</li>
+<li>Prefer dynamic loading so normal CPU-only builds do not require CUDA libraries
+  at build time.</li>
+<li>Hide all CUDA-specific code behind a Cargo feature, for example
+  <code>cuda-backend</code>.</li>
+<li>Keep PyO3 CUDA entry points private and call them only through
+  <code>python/modern_fm/_backend.py</code>.</li>
+</ul>
+<h3 id="data-ownership">Data Ownership<a class="headerlink" href="#data-ownership" title="Permanent link">&para;</a></h3>
+<p>For v1, use transfer-inclusive calls:</p>
+<ol>
+<li>Python converts input to canonical CSR using the existing <code>_prep_csr</code>.</li>
+<li>Rust CUDA function copies CSR arrays and parameters to device memory.</li>
+<li>CUDA kernel computes output or batch gradients.</li>
+<li>Rust copies results back to host and returns existing NumPy arrays.</li>
+</ol>
+<p>After prediction and accumulation are correct, add a device-resident context to
+avoid repeated parameter and CSR transfers across epochs or repeated predict
+calls. The CUDA Best Practices Guide specifically warns that host/device
+transfers are costly and should be minimized; therefore the benchmark must show
+both transfer-inclusive and device-resident timings.</p>
+<p>Status: the context/module half of this is done — the device-0 context and the
+NVRTC-compiled module are created once per process and cached
+(<code>rust/src/cuda/mod.rs</code>). Model-parameter/CSR residency across calls is still
+open.</p>
+<h2 id="kernel-strategy">Kernel Strategy<a class="headerlink" href="#kernel-strategy" title="Permanent link">&para;</a></h2>
+<h3 id="fm-csr-prediction-v1">FM CSR Prediction v1<a class="headerlink" href="#fm-csr-prediction-v1" title="Permanent link">&para;</a></h3>
+<p>Implement a simple custom kernel first:</p>
+<ul>
+<li>One CUDA block per row.</li>
+<li>Threads cooperate across row nonzeros and latent factor dimension <code>k</code>.</li>
+<li>Use shared memory for per-factor <code>sum</code> and <code>sum_sq</code> when <code>k</code> is small enough.</li>
+<li>Write exactly one score per row.</li>
+</ul>
+<p>Optimize only after profiling:</p>
+<ul>
+<li>If average <code>nnz</code> is small, group multiple rows per block.</li>
+<li>If <code>k</code> is large, tile <code>k</code> across warps.</li>
+<li>Use coalesced loads for <code>V[i, f]</code> where possible; row-major <code>(n_features, k)</code>
+  makes adjacent factor loads contiguous.</li>
+</ul>
+<p>Alternative library path:</p>
+<ul>
+<li>FM needs <code>X @ V</code> and <code>X @ (V^2)</code>-like sparse-dense products for prediction.</li>
+<li>cuSPARSE SpMM can accelerate this, but the linear term and final row-wise
+  reduction still need custom kernels.</li>
+<li>Use cuSPARSE only after the direct kernel baseline exists; it may add layout
+  and transfer complexity before the benefit is proven.</li>
+</ul>
+<h3 id="ffm-csr-prediction-v1">FFM CSR Prediction v1<a class="headerlink" href="#ffm-csr-prediction-v1" title="Permanent link">&para;</a></h3>
+<p>Implement custom kernels rather than forcing the problem into cuSPARSE:</p>
+<ul>
+<li>One block per row for moderate <code>z</code>.</li>
+<li>For rows with large <code>z</code>, split pair ranges across multiple blocks and reduce
+  partial row scores.</li>
+<li>Cache row feature ids, values, and field ids in shared memory when feasible.</li>
+<li>Load <code>V[(i * n_fields + field_j) * k + t]</code> and the symmetric slot for each
+  pair.</li>
+</ul>
+<p>This path is likely the strongest GPU payoff because FFM is <code>O(z^2 * k)</code>, but it
+will also be the most sensitive to sparse-row imbalance.</p>
+<h3 id="training-accumulation-v1">Training Accumulation v1<a class="headerlink" href="#training-accumulation-v1" title="Permanent link">&para;</a></h3>
+<p>Use a two-stage design:</p>
+<ol>
+<li>CUDA computes per-row score, loss gradient, and data-gradient contributions.</li>
+<li>Contributions are reduced to a batch accumulator.</li>
+<li>CPU performs the existing optimizer flush.</li>
+</ol>
+<p>For the first implementation, prioritize correctness over memory efficiency:</p>
+<ul>
+<li>Use dense gradient buffers shaped like existing CPU accumulators if the test
+  problem is small enough.</li>
+<li>For real CTR shapes, switch to sparse triplets or sorted touched-coordinate
+  buffers before claiming performance.</li>
+<li>Avoid GPU atomics as the only design until contention is measured; feature
+  collisions in one-hot data can make atomic-heavy kernels slow and
+  nondeterministic.</li>
+</ul>
+<p>For FM accumulation, the row-local cache <code>sum_f = sum_i V[i,f] x_i</code> is reusable
+for both score and <code>V</code> gradient. For FFM accumulation, reuse the pairwise score
+loop to emit the two factor-slot gradients per <code>(i, j)</code> pair.</p>
+<h2 id="api-and-packaging">API And Packaging<a class="headerlink" href="#api-and-packaging" title="Permanent link">&para;</a></h2>
+<p>Do not make CUDA a hard dependency.</p>
+<p>Recommended packaging behavior:</p>
+<ul>
+<li>CPU-only source/wheels continue to build exactly as they do now.</li>
+<li>CUDA support is opt-in through a Cargo feature and a Python extra only if the
+  project chooses to expose one.</li>
+<li>Importing <code>modern_fm</code> must not fail on machines without CUDA.</li>
+<li><code>has_rust()</code> should keep its current meaning. Add a separate private helper
+  such as <code>_backend.has_cuda()</code> if needed.</li>
+</ul>
+<p>Recommended validation behavior:</p>
+<ul>
+<li><code>backend="rust_cpu"</code>: current behavior.</li>
+<li><code>backend="cuda"</code> with unsupported model/mode: raise <code>NotImplementedError</code> or
+  <code>ValueError</code> with the exact unsupported cell, for example "CUDA backend
+  currently supports FM/FFM prediction and binary/regression fit only".</li>
+<li><code>backend="cuda"</code> without CUDA runtime/device: raise a clear runtime backend
+  error.</li>
+<li><code>backend="auto"</code> if added later: fall back to CPU only when CUDA is absent,
+  not when CUDA exists but a kernel fails.</li>
+</ul>
+<h2 id="testing-and-benchmarks">Testing And Benchmarks<a class="headerlink" href="#testing-and-benchmarks" title="Permanent link">&para;</a></h2>
+<h3 id="correctness-tests">Correctness Tests<a class="headerlink" href="#correctness-tests" title="Permanent link">&para;</a></h3>
+<p>Add CUDA tests that skip when CUDA is unavailable:</p>
+<ul>
+<li>FM CSR prediction parity vs <code>_reference.fm_predict_fast</code> and Rust CPU.</li>
+<li>FFM CSR prediction parity vs <code>_reference.ffm_predict</code> and Rust CPU.</li>
+<li>Empty rows return the bias.</li>
+<li>Single-nonzero rows have no pairwise term.</li>
+<li>Dense input follows the existing dense-to-CSR training path where applicable.</li>
+<li>Binary logistic and squared-loss training on small deterministic datasets once
+  CUDA accumulation exists.</li>
+</ul>
+<p>Use tolerance-based assertions. CUDA will change floating-point reduction order;
+the CUDA Best Practices Guide calls out non-associativity of floating-point
+addition in parallel computation.</p>
+<p>Suggested initial tolerances:</p>
+<ul>
+<li>Prediction float64: <code>rtol=1e-10</code>, <code>atol=1e-10</code>.</li>
+<li>Training float64: compare final predictions and loss trend, not raw parameter
+  bit patterns; start at <code>rtol=1e-7</code>, <code>atol=1e-8</code> and tighten only if stable.</li>
+<li>Float32 model attributes: compare at float32-appropriate tolerances.</li>
+</ul>
+<h3 id="benchmark-script">Benchmark Script<a class="headerlink" href="#benchmark-script" title="Permanent link">&para;</a></h3>
+<p>Add a CUDA benchmark, for example <code>benchmarks/bench_cuda.py</code>, reporting:</p>
+<ul>
+<li>FM/FFM prediction throughput: CPU Rust vs CUDA.</li>
+<li>FM/FFM fit time for binary/regression once accumulation is implemented.</li>
+<li>Transfer-inclusive timing.</li>
+<li>Device-resident timing if a CUDA context/cache is added.</li>
+<li>Dataset dimensions: rows, features, fields, average nnz, <code>k</code>, density,
+  <code>batch_size</code>.</li>
+<li>GPU model, CUDA version, driver version, CPU model, thread count.</li>
+</ul>
+<p>Benchmark cases:</p>
+<ul>
+<li>FM: <code>n_rows</code> in <code>{10_000, 100_000, 1_000_000}</code>, average <code>nnz</code> in <code>{8, 32, 128}</code>,
+  <code>k</code> in <code>{8, 16, 32, 64}</code>.</li>
+<li>FFM: average <code>nnz</code> in <code>{8, 16, 32}</code>, <code>n_fields</code> in <code>{8, 16, 32}</code>, <code>k</code> in
+  <code>{4, 8, 16}</code>.</li>
+<li>Training: <code>batch_size</code> in <code>{256, 1024, 8192, full}</code>.</li>
+</ul>
+<p>Do not report a CUDA speedup unless transfer-inclusive timing beats CPU on a
+realistic large sparse workload.</p>
+<h2 id="risks">Risks<a class="headerlink" href="#risks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Host/device transfer can erase speedups for small batches.</li>
+<li>FFM row lengths can be highly imbalanced, causing poor occupancy.</li>
+<li>Sparse gradient reduction can be dominated by atomic contention or sort/reduce
+  overhead.</li>
+<li>cuSPARSE SpMM may not match FM/FFM's custom scoring shape well enough to
+  justify integration complexity.</li>
+<li>CUDA reductions will not be bit-identical to CPU; tests and docs must accept
+  tolerance-based parity.</li>
+<li>FTRL and Adam state updates are per-coordinate and lazy; moving them to GPU is
+  a separate project after accumulation is proven.</li>
+<li>Optional CUDA packaging can complicate wheels. Keep the CPU build path
+  untouched.</li>
+</ul>
+<h2 id="research-notes">Research Notes<a class="headerlink" href="#research-notes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>NVIDIA's CUDA Programming Guide is the primary CUDA programming-model
+  reference and is kept current with CUDA releases:
+  https://docs.nvidia.com/cuda/cuda-programming-guide/index.html</li>
+<li>NVIDIA's CUDA Best Practices Guide recommends the APOD cycle: assess,
+  parallelize, optimize, deploy. It also emphasizes minimizing host/device data
+  transfer, using coalesced global memory access, and comparing floating-point
+  results within tolerances:
+  https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html</li>
+<li>cuSPARSE expects vectors and matrices to reside in device memory, supports CSR
+  descriptors, and can gracefully coexist with a CPU-only path when linked in a
+  way that does not require CUDA at build time:
+  https://docs.nvidia.com/cuda/cusparse/index.html</li>
+<li><code>cudarc</code> is the best Rust fit found for this codebase. It provides wrappers
+  for the CUDA Driver API, NVRTC, cuBLAS, cuSPARSE, and dynamic loading:
+  https://docs.rs/cudarc/latest/cudarc/</li>
+<li>GE-SpMM is a useful design reference for CSR sparse-dense GPU kernels. Its
+  main lesson for this project is to avoid assuming SpMV-style kernels will be
+  efficient for SpMM-like work; coalescing, row caching, and sparse-row reuse
+  matter:
+  https://arxiv.org/abs/2007.03179</li>
+</ul>
+<h2 id="claude-code-prompt">Claude Code Prompt<a class="headerlink" href="#claude-code-prompt" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>You are implementing optional CUDA acceleration for modern_fm.
+
+Read these files before editing:
+- CLAUDE.md
+- docs/math_spec.md
+- docs/optimization_spec.md
+- docs/api_design.md
+- docs/data_format.md
+- docs/gpu_backend_plan.md
+- python/modern_fm/_backend.py
+- rust/src/lib.rs
+- rust/src/fm.rs
+- rust/src/ffm.rs
+- rust/src/optimizer.rs
+
+Non-negotiable constraints:
+- Do not change the NumPy reference implementations for speed.
+- Keep Rust CPU behavior and public sklearn API backward-compatible.
+- Keep CPU-only builds and imports working on machines without CUDA.
+- Add CUDA behind an optional backend path; CPU remains the default.
+- Preserve existing dtype, CSR, validation, serialization, and estimator
+  contracts unless docs are updated in the same change.
+
+Start with the narrowest useful milestone:
+1. Add optional CUDA backend plumbing behind Cargo/Python feature gates.
+2. Add backend validation for backend=&quot;cuda&quot; with a clear error when CUDA is
+   unavailable.
+3. Implement FM CSR prediction on CUDA.
+4. Add parity tests that skip when CUDA is unavailable.
+5. Add a benchmark comparing Rust CPU and CUDA, including transfer-inclusive
+   timing.
+6. Only after FM prediction is correct, proceed to FFM CSR prediction.
+
+Preferred implementation direction:
+- Use Rust + cudarc/dynamic loading if practical.
+- Keep CUDA PyO3 functions private and route through python/modern_fm/_backend.py.
+- Implement custom kernels before integrating cuSPARSE, unless profiling shows
+  cuSPARSE is clearly simpler and faster for FM prediction.
+- For v1 training, offload mini-batch gradient accumulation before moving
+  optimizer flushes to GPU.
+
+Do not implement multiclass CUDA training, early-stopping optimizer-state
+handoff, partial_fit/warm_start optimizer-state persistence, or GPU optimizer
+flush until prediction parity and benchmarks are in place. *(Deferral lifted
+in v1.1: multiclass CUDA training shipped as milestone 5 — ES and
+partial_fit state handoff came for free because the flush and all optimizer
+state stayed on the CPU. The GPU optimizer flush remains out of scope.)*
+
+Acceptance criteria for the first PR:
+- CPU-only tests still pass without CUDA.
+- CUDA tests are skipped cleanly when CUDA is unavailable.
+- FM CSR CUDA prediction matches the Python reference and Rust CPU within a
+  documented floating-point tolerance.
+- backend=&quot;cuda&quot; gives a clear error if CUDA support is not compiled or no CUDA
+  device/runtime is available.
+- benchmarks/bench_cuda.py reports CPU Rust vs CUDA timings and includes
+  transfer-inclusive timing.
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

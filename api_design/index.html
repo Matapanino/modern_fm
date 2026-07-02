@@ -1,0 +1,1416 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Factorization Machines (FM/FFM/FwFM) for Python — sklearn-compatible API, Rust CPU core, optional CUDA backend.">
+      
+      
+      
+        <link rel="canonical" href="https://matapanino.github.io/modern_fm/api_design/">
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../data_format/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>API reference - modern_fm</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-design" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="modern_fm" class="md-header__button md-logo" aria-label="modern_fm" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            modern_fm
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Matapanino/modern_fm" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Matapanino/modern_fm
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="modern_fm" class="md-nav__button md-logo" aria-label="modern_fm" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    modern_fm
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Matapanino/modern_fm" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Matapanino/modern_fm
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fmclassifier-fmregressor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FMClassifier / FMRegressor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ffmclassifier-ffmregressor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FFMClassifier / FFMRegressor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fwfmclassifier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FwFMClassifier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#biinteractionpooling-feature-transform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BiInteractionPooling (feature transform)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#categoricalencoder-libffm-io" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CategoricalEncoder &amp; libffm I/O
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#partial-fit-warm-start-incremental-streaming-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Partial fit / warm start (incremental &amp; streaming training)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#probability-calibration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Probability calibration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-inspection-top-interactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model inspection: top interactions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#learned-attributes-after-fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Learned attributes (after fit)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors-and-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors and validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data_format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Math
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math_spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FM / FFM spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math_spec_fwfm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FwFM spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../optimization_spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU backend
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    GPU backend
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gpu_backend_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CUDA plan & status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cuda_validation_runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compat_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../requirements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Requirements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmark_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmark plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fmclassifier-fmregressor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FMClassifier / FMRegressor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ffmclassifier-ffmregressor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FFMClassifier / FFMRegressor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fwfmclassifier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FwFMClassifier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#biinteractionpooling-feature-transform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BiInteractionPooling (feature transform)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#categoricalencoder-libffm-io" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CategoricalEncoder &amp; libffm I/O
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#partial-fit-warm-start-incremental-streaming-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Partial fit / warm start (incremental &amp; streaming training)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#probability-calibration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Probability calibration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-inspection-top-interactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model inspection: top interactions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#learned-attributes-after-fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Learned attributes (after fit)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors-and-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors and validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-design">API Design<a class="headerlink" href="#api-design" title="Permanent link">&para;</a></h1>
+<p>All estimators follow scikit-learn conventions: <code>__init__</code> stores parameters
+only, learned attributes end with <code>_</code>, <code>fit</code> returns <code>self</code>,
+<code>get_params</code>/<code>set_params</code> round-trip.</p>
+<h2 id="fmclassifier-fmregressor">FMClassifier / FMRegressor<a class="headerlink" href="#fmclassifier-fmregressor" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">modern_fm</span><span class="w"> </span><span class="kn">import</span> <span class="n">FMClassifier</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">FMClassifier</span><span class="p">(</span>
+    <span class="n">n_factors</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+    <span class="n">loss</span><span class="o">=</span><span class="s2">&quot;logistic&quot;</span><span class="p">,</span>          <span class="c1"># classifier: &quot;logistic&quot; (binary) / &quot;softmax&quot; (auto for multiclass)</span>
+    <span class="n">optimizer</span><span class="o">=</span><span class="s2">&quot;adagrad&quot;</span><span class="p">,</span>      <span class="c1"># &quot;sgd&quot; | &quot;adagrad&quot; | &quot;adam&quot; | &quot;ftrl&quot;</span>
+    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>       <span class="c1"># also FTRL&#39;s alpha (step size)</span>
+    <span class="n">beta_1</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span>               <span class="c1"># Adam 1st-moment decay (optimizer=&quot;adam&quot; only)</span>
+    <span class="n">beta_2</span><span class="o">=</span><span class="mf">0.999</span><span class="p">,</span>             <span class="c1"># Adam 2nd-moment decay (optimizer=&quot;adam&quot; only)</span>
+    <span class="n">epsilon</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span>             <span class="c1"># Adam denominator epsilon (optimizer=&quot;adam&quot; only)</span>
+    <span class="n">ftrl_beta</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>            <span class="c1"># FTRL stabilizer beta (optimizer=&quot;ftrl&quot; only)</span>
+    <span class="n">max_iter</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>             <span class="c1"># 1 = per-row SGD; &gt;1 averages the batch gradient</span>
+    <span class="n">l2_linear</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>
+    <span class="n">l2_factors</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>
+    <span class="n">l1_linear</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>            <span class="c1"># L1 on linear weights (FTRL only; yields exact zeros)</span>
+    <span class="n">l1_factors</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>           <span class="c1"># L1 on latent factors (FTRL only)</span>
+    <span class="n">init_scale</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>          <span class="c1"># stddev of latent factor init</span>
+    <span class="n">label_smoothing</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">class_weight</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>        <span class="c1"># None | &quot;balanced&quot; | dict</span>
+    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">validation_fraction</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">patience</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="n">min_delta</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">warm_start</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>         <span class="c1"># fit() resumes from the previous solution + optimizer state</span>
+    <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">,</span>          <span class="c1"># &quot;float32&quot; | &quot;float64&quot;</span>
+    <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;rust_cpu&quot;</span><span class="p">,</span>       <span class="c1"># or &quot;cuda&quot;: requires a cuda-backend build + GPU</span>
+                              <span class="c1"># (compute capability &gt;= 6.0); covers every</span>
+                              <span class="c1"># prediction and training cell (FM/FFM/FwFM,</span>
+                              <span class="c1"># binary/regression/multiclass);</span>
+                              <span class="c1"># CUDA training is nondeterministic run-to-run —</span>
+                              <span class="c1"># rust_cpu keeps exact seeded reproducibility;</span>
+                              <span class="c1"># never a silent CPU fallback (gpu_backend_plan.md)</span>
+    <span class="n">random_state</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">n_jobs</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">sample_weight</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_set</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">predict_proba</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>        <span class="c1"># classifier only; rows sum to 1</span>
+<span class="n">model</span><span class="o">.</span><span class="n">decision_function</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>    <span class="c1"># classifier only; raw scores / logits</span>
+<span class="n">model</span><span class="o">.</span><span class="n">save_model</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+<span class="n">FMClassifier</span><span class="o">.</span><span class="n">load_model</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+</code></pre></div>
+<p><code>FMRegressor</code> is identical minus <code>loss</code>/<code>class_weight</code>/<code>label_smoothing</code>/
+<code>predict_proba</code>/<code>decision_function</code> (loss is squared error).</p>
+<h2 id="ffmclassifier-ffmregressor">FFMClassifier / FFMRegressor<a class="headerlink" href="#ffmclassifier-ffmregressor" title="Permanent link">&para;</a></h2>
+<p>Field information is <strong>explicit and required</strong> in v0.1 — automatic field
+inference hides bugs that silently degrade accuracy.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">modern_fm</span><span class="w"> </span><span class="kn">import</span> <span class="n">FFMClassifier</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">FFMClassifier</span><span class="p">(</span>
+    <span class="n">n_factors</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+    <span class="n">optimizer</span><span class="o">=</span><span class="s2">&quot;adagrad&quot;</span><span class="p">,</span>
+    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+    <span class="n">max_iter</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+    <span class="n">l2_linear</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>
+    <span class="n">l2_factors</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>
+    <span class="n">label_smoothing</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">field_ids</span><span class="o">=</span><span class="n">field_ids</span><span class="p">)</span>        <span class="c1"># field_ids: int array, shape (n_features,)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">predict_proba</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>                       <span class="c1"># field mapping is stored on the model at fit time</span>
+</code></pre></div>
+<p>Binary (logistic) by default; pass a target with &gt;2 classes (or <code>loss="softmax"</code>)
+to train one FFM per class coupled by softmax — <code>predict_proba</code> rows then sum to 1
+over <code>n_classes</code>.</p>
+<p><code>field_ids[i]</code> is the field of feature/column <code>i</code>; it is optional — when omitted,
+each column becomes its own field, so <code>fit(X, y)</code> works under the plain sklearn
+API. After <code>fit</code>, the model stores <code>field_ids_</code> and <code>n_fields_</code>; predict-time
+calls do not take field_ids.</p>
+<p><code>FFMRegressor</code> is the squared-loss counterpart (as <code>FMRegressor</code> is to
+<code>FMClassifier</code>): the same constructor minus <code>loss</code> / <code>label_smoothing</code> /
+<code>class_weight</code>, and no <code>predict_proba</code> / <code>decision_function</code> / <code>classes_</code>.
+<code>fit(X, y, field_ids=…)</code> takes the same field mapping and stores <code>field_ids_</code> /
+<code>n_fields_</code>; <code>predict(X)</code> returns the raw FFM score (squared-error loss).</p>
+<h2 id="fwfmclassifier">FwFMClassifier<a class="headerlink" href="#fwfmclassifier" title="Permanent link">&para;</a></h2>
+<p>Field-weighted FM (docs/math_spec_fwfm.md): FM-shaped factors <code>V (n, k)</code> plus
+one learned scalar weight per field pair, <code>r_ (n_fields, n_fields)</code> (upper
+triangle used), scaling each pairwise interaction. <code>r_</code> initializes to ones,
+so a fresh FwFM is exactly a plain FM.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">modern_fm</span><span class="w"> </span><span class="kn">import</span> <span class="n">FwFMClassifier</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">FwFMClassifier</span><span class="p">(</span><span class="n">n_factors</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">field_ids</span><span class="o">=</span><span class="n">field_ids</span><span class="p">)</span>   <span class="c1"># same field plumbing as FFMClassifier</span>
+<span class="n">model</span><span class="o">.</span><span class="n">predict_proba</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>
+</code></pre></div>
+<p>The constructor, <code>fit(X, y, field_ids=…)</code>, binary/softmax dispatch,
+early stopping / <code>eval_set</code>, <code>partial_fit(classes=…, field_ids=…)</code> and
+<code>warm_start</code> all mirror <code>FFMClassifier</code>. Differences: training is serial in
+v0.5 (<code>n_jobs</code> is accepted but does not parallelize FwFM), and there is one
+extra learned attribute <code>r_</code> — <code>(n_fields, n_fields)</code> binary,
+<code>(n_classes, n_fields, n_fields)</code> multiclass — regularized by
+<code>l2_factors</code> / <code>l1_factors</code>.</p>
+<h2 id="biinteractionpooling-feature-transform">BiInteractionPooling (feature transform)<a class="headerlink" href="#biinteractionpooling-feature-transform" title="Permanent link">&para;</a></h2>
+<p>Bi-interaction pooling (He &amp; Chua, SIGIR 2017) as an sklearn transformer — the
+k-dim FM pairwise vector before its factor-sum, for downstream models. As a
+<em>predictor</em> a linear head over it provably collapses to plain FM (NFM = this +
+an MLP, which is out of scope), so it ships as a transform, not a model.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">modern_fm</span><span class="w"> </span><span class="kn">import</span> <span class="n">BiInteractionPooling</span><span class="p">,</span> <span class="n">FMRegressor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">make_pipeline</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.linear_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">LogisticRegression</span>
+
+<span class="n">pipe</span> <span class="o">=</span> <span class="n">make_pipeline</span><span class="p">(</span>
+    <span class="n">BiInteractionPooling</span><span class="p">(</span><span class="n">FMRegressor</span><span class="p">(</span><span class="n">n_factors</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">random_state</span><span class="o">=</span><span class="mi">0</span><span class="p">)),</span>
+    <span class="n">LogisticRegression</span><span class="p">(),</span>
+<span class="p">)</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><code>BiInteractionPooling(estimator=None)</code> clones and fits the given FM
+  (<code>None</code> -&gt; <code>FMRegressor(n_factors=8)</code>); <code>transform(X)</code> returns
+  <code>(n_samples, n_factors)</code> pooled features (multiclass inner FMs pool per
+  class, concatenated to <code>(n_samples, n_classes * n_factors)</code>);
+  <code>get_feature_names_out()</code> follows the sklearn convention.</li>
+<li>The fitted FM estimators expose the same features directly via
+  <code>model.bi_interaction(X)</code> (deliberately <strong>not</strong> named <code>transform</code>, so plain
+  FMs keep plain-estimator semantics in sklearn tooling).</li>
+</ul>
+<h2 id="categoricalencoder-libffm-io">CategoricalEncoder &amp; libffm I/O<a class="headerlink" href="#categoricalencoder-libffm-io" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">enc</span> <span class="o">=</span> <span class="n">CategoricalEncoder</span><span class="p">(</span><span class="n">handle_unknown</span><span class="o">=</span><span class="s2">&quot;ignore&quot;</span><span class="p">)</span>  <span class="c1"># or &quot;error&quot;</span>
+<span class="n">X_csr</span> <span class="o">=</span> <span class="n">enc</span><span class="o">.</span><span class="n">fit_transform</span><span class="p">(</span><span class="n">X_int_columns</span><span class="p">)</span>   <span class="c1"># one-hot CSR (float64)</span>
+<span class="n">enc</span><span class="o">.</span><span class="n">field_ids_</span>                             <span class="c1"># (n_features_out_,) source column of each output column</span>
+<span class="n">enc</span><span class="o">.</span><span class="n">categories_</span><span class="p">,</span> <span class="n">enc</span><span class="o">.</span><span class="n">n_features_out_</span><span class="p">,</span> <span class="n">enc</span><span class="o">.</span><span class="n">n_fields_</span>
+</code></pre></div>
+<p>One-hot encodes integer categorical columns to CSR while tracking the field
+of every output column — the natural <code>field_ids</code> source for FFM/FwFM. At
+<code>transform</code>, categories unseen during <code>fit</code> either contribute no active
+column (<code>handle_unknown="ignore"</code>, the default) or raise (<code>"error"</code>).</p>
+<div class="highlight"><pre><span></span><code><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">field_ids</span> <span class="o">=</span> <span class="n">load_libffm</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>        <span class="c1"># libffm text -&gt; (CSR, y, field_ids)</span>
+<span class="n">dump_libffm</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">field_ids</span><span class="p">)</span>         <span class="c1"># round-trips</span>
+</code></pre></div>
+<h2 id="partial-fit-warm-start-incremental-streaming-training">Partial fit / warm start (incremental &amp; streaming training)<a class="headerlink" href="#partial-fit-warm-start-incremental-streaming-training" title="Permanent link">&para;</a></h2>
+<p>All five estimators support incremental training:</p>
+<div class="highlight"><pre><span></span><code><span class="n">model</span><span class="o">.</span><span class="n">partial_fit</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">classes</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">sample_weight</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>                  <span class="c1"># FM*</span>
+<span class="n">model</span><span class="o">.</span><span class="n">partial_fit</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">classes</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">field_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">sample_weight</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># FFM*</span>
+<span class="c1"># the regressors drop `classes`</span>
+</code></pre></div>
+<ul>
+<li><strong>One pass per call.</strong> Each <code>partial_fit</code> runs a single epoch over its chunk in
+  natural row order, continuing the persisted optimizer state, with no shuffle and no
+  early stopping.</li>
+<li><strong>First call.</strong> Classifiers require <code>classes=</code> (all labels) on the first call
+  (sklearn convention); binary-vs-multiclass is frozen then. The FFM <code>field_ids</code> map
+  is set on the first call and validated (or reused) thereafter.
+  <code>class_weight="balanced"</code> is not supported by <code>partial_fit</code> (it cannot be computed
+  from a stream).</li>
+<li><strong>Exactness contract.</strong> N sequential <code>partial_fit</code> calls over consecutive chunks
+  equal one <code>partial_fit</code> over the concatenation, bit-for-bit, given <code>dtype="float64"</code>,
+  <code>n_jobs=1</code>, and <code>batch_size=1</code> (or chunk lengths that are multiples of
+  <code>batch_size</code>). <code>dtype="float32"</code> truncates parameters between calls and <code>n_jobs&gt;1</code>
+  reorders float sums, so both relax bit-exactness.</li>
+<li><code>n_iter_</code> accumulates the number of passes across calls.</li>
+</ul>
+<p><code>warm_start=True</code> makes <code>fit</code> resume from the current <code>w0_</code>/<code>w_</code>/<code>V_</code> (and the
+persisted optimizer state) instead of re-initializing, then run <code>max_iter</code> more epochs
+(honoring <code>early_stopping</code>); <code>warm_start=False</code> is a fresh fit. <code>save_model</code> /
+<code>load_model</code> does <strong>not</strong> persist the streamed optimizer state (<code>pickle</code> does);
+resuming after <code>load_model</code> restarts the optimizer accumulators from the loaded
+parameters.</p>
+<h2 id="probability-calibration">Probability calibration<a class="headerlink" href="#probability-calibration" title="Permanent link">&para;</a></h2>
+<p>Calibrated <code>predict_proba</code> is the standard scikit-learn recipe — the
+classifiers are <code>check_estimator</code>-clean, so <code>CalibratedClassifierCV</code> works
+directly and there is deliberately no library-specific calibration API:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.calibration</span><span class="w"> </span><span class="kn">import</span> <span class="n">CalibratedClassifierCV</span>
+
+<span class="n">cal</span> <span class="o">=</span> <span class="n">CalibratedClassifierCV</span><span class="p">(</span><span class="n">FMClassifier</span><span class="p">(</span><span class="o">...</span><span class="p">),</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;sigmoid&quot;</span><span class="p">,</span> <span class="n">cv</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">cal</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+<span class="n">cal</span><span class="o">.</span><span class="n">predict_proba</span><span class="p">(</span><span class="n">X_new</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><code>method="sigmoid"</code> (Platt) suits systematic distortions (e.g. training with
+  <code>label_smoothing</code> compresses probabilities toward 0.5); <code>"isotonic"</code> needs
+  more data but fixes arbitrary monotone miscalibration.</li>
+<li>Tested for every public classifier (<code>tests/test_calibration.py</code>, including
+  an ECE/Brier-improvement pin on synthetically miscalibrated data); see
+  <code>examples/calibration.py</code> for a reliability-table walkthrough.</li>
+</ul>
+<h2 id="model-inspection-top-interactions">Model inspection: top interactions<a class="headerlink" href="#model-inspection-top-interactions" title="Permanent link">&para;</a></h2>
+<p>Every FM/FFM/FwFM estimator exposes the strongest learned pairwise
+interactions of a fitted model:</p>
+<div class="highlight"><pre><span></span><code><span class="n">model</span><span class="o">.</span><span class="n">top_interactions</span><span class="p">(</span><span class="n">n_top</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>                <span class="c1"># [(i, j, strength), ...] desc</span>
+<span class="n">model</span><span class="o">.</span><span class="n">top_interactions</span><span class="p">(</span><span class="n">n_top</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">class_idx</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># multiclass: one class at a time</span>
+</code></pre></div>
+<p><code>strength</code> is the magnitude of the learned pairwise coefficient of
+<code>x_i x_j</code> (docs/math_spec.md): <code>|&lt;V_i, V_j&gt;|</code> for FM,
+<code>|r[min(f_i,f_j), max(f_i,f_j)] * &lt;V_i, V_j&gt;|</code> for FwFM, and
+<code>|&lt;V[i, f_j], V[j, f_i]&gt;|</code> for FFM. Pairs are feature-index tuples with
+<code>i &lt; j</code>; map indices to names via <code>feature_names_in_</code> when fitted on a
+DataFrame. The scan is exact (full upper triangle, blockwise BLAS,
+O(n_features² · n_factors)) — fine up to tens of thousands of features.
+See <code>examples/top_interactions.py</code>.</p>
+<h2 id="learned-attributes-after-fit">Learned attributes (after fit)<a class="headerlink" href="#learned-attributes-after-fit" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>w0_</code> (float), <code>w_</code> (n_features,), <code>V_</code></li>
+<li>FM: <code>V_</code> shape <code>(n_features, n_factors)</code></li>
+<li>FFM: <code>V_</code> shape <code>(n_features, n_fields, n_factors)</code></li>
+<li>FwFM: <code>V_</code> shape <code>(n_features, n_factors)</code> plus <code>r_</code> shape
+    <code>(n_fields, n_fields)</code> (upper triangle used)</li>
+<li><code>classes_</code> (classifiers), <code>n_features_in_</code>, <code>n_iter_</code></li>
+<li>FFM / FwFM: <code>field_ids_</code>, <code>n_fields_</code></li>
+<li>multiclass (one parameter set per class): <code>w0_</code> shape <code>(n_classes,)</code>, <code>w_</code> shape
+  <code>(n_classes, n_features)</code>; FM <code>V_</code> shape <code>(n_classes, n_features, n_factors)</code>,
+  FFM <code>V_</code> shape <code>(n_classes, n_features, n_fields, n_factors)</code>,
+  FwFM <code>V_</code> shape <code>(n_classes, n_features, n_factors)</code> + <code>r_</code> shape
+  <code>(n_classes, n_fields, n_fields)</code></li>
+</ul>
+<h2 id="errors-and-validation">Errors and validation<a class="headerlink" href="#errors-and-validation" title="Permanent link">&para;</a></h2>
+<ul>
+<li>shape/dtype validation at <code>fit</code>/<code>predict</code>, raising <code>ValueError</code> with clear messages</li>
+<li><code>predict</code> before <code>fit</code> raises <code>NotFittedError</code> (sklearn's)</li>
+<li>unknown optimizer/loss strings raise <code>ValueError</code> at <code>fit</code> time (not <code>__init__</code>)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
