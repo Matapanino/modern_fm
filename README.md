@@ -27,8 +27,8 @@ exact-zero weights. The estimators are scikit-learn
 `check_estimator`-compatible (drop into `Pipeline` / `GridSearchCV` /
 `CalibratedClassifierCV`), accept pandas / polars DataFrames, and
 `load_libffm` / `dump_libffm` read and write the libffm text format. An
-optional CUDA backend (`backend="cuda"`, source-build feature) accelerates
-FM/FFM prediction and FM/FFM binary/regression training on NVIDIA GPUs
+optional CUDA backend (`backend="cuda"`) accelerates every prediction and
+training cell — FM/FFM/FwFM, binary/regression/multiclass — on NVIDIA GPUs
 (compute ≥ 6.0).
 
 ## Installation
@@ -36,6 +36,11 @@ FM/FFM prediction and FM/FFM binary/regression training on NVIDIA GPUs
 ```bash
 pip install modern-fm        # prebuilt wheels for Linux/macOS/Windows, no Rust toolchain needed
 ```
+
+The Linux wheels are CUDA-ready out of the box: wherever an NVIDIA driver
+(CUDA 12+) is present — e.g. Colab/Kaggle GPU runtimes — `backend="cuda"`
+just works; on CPU-only machines the same wheel behaves exactly like a CPU
+build. macOS/Windows wheels are CPU-only.
 
 To build from source instead (e.g. on a platform without a prebuilt wheel), see
 Development below; it requires a Rust toolchain.

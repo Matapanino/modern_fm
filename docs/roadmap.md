@@ -267,12 +267,36 @@ per-item DoDs above are the local checks):
     inspection shipped.
 12. **Released** — version `1.0.0`, CHANGELOG complete, `v1.0.0` tag published.
 
-## Post-1.0 — model variants & GPU
+## v1.1 — full CUDA coverage + CUDA-enabled Linux wheels
+
+Shipped 2026-07-02 (additive minor under `docs/compat_policy.md`):
+
+- **CUDA multiclass (softmax) training for FM and FFM**
+  (gpu_backend_plan milestone 5): GPU per-class batch accumulation with the
+  softmax computed in-kernel in CPU class order; the untouched CPU flush runs
+  per class via `McState::class_views`, so every optimizer, ES and
+  `partial_fit` ride through. FFM uses a two-kernel design so one
+  class-sized dense gv buffer serves all classes.
+- **FwFM CUDA — prediction + binary/regression + multiclass training**
+  (milestone 6): new prediction kernel (FFM geometry, FM-shaped V, R pair
+  weights) and training kernels (compact feature slots + dense `n_fields²`
+  gr); the R group flushes through `GroupStateMut`/`McGroupState` unchanged.
+  With this, **every prediction and training cell is CUDA-covered** and the
+  per-cell `NotImplementedError` guards are gone.
+- **CUDA-ready Linux wheels**: `pip install modern-fm` on Linux now ships the
+  `cuda-backend` feature (cudarc `dynamic-loading` pinned — nothing links
+  libcuda, manylinux-clean); `backend="cuda"` works on Colab/Kaggle GPU
+  runtimes without a source build. Gated in CI (`cuda-wheel`) and in the
+  release workflow (`linux-wheel-check`: CPU-only import, `has_cuda() is
+  False`, full suite, auditwheel).
+
+## Post-1.1 — model variants & GPU
 
 - AFM, FEFM/FmFM (each gets its own math spec first, per the FwFM template)
 - pairwise dropout, interaction pruning
 - PyTorch-compatible backend prototype
-- CUDA backend investigation (cuML-style `device=`/`backend=` switch)
+- GPU optimizer flush; stacked-gv fast path for small-C FFM multiclass
+- cuML-style `device=` switch investigation
 
 ## Distribution
 
