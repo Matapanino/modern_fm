@@ -47,11 +47,11 @@ _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
 def _validate_backend(backend):
     """Validate the `backend` constructor parameter at fit time.
 
-    "rust_cpu" is the (only implemented) default. "cuda" is accepted as
-    plumbing for the optional CUDA backend (docs/gpu_backend_plan.md): it
-    requires a `cuda-backend` build plus an NVIDIA driver + device, and until
-    the first CUDA kernels land every operation raises NotImplementedError —
-    there is deliberately no silent CPU fallback.
+    "rust_cpu" is the (only complete) default. "cuda" (docs/gpu_backend_plan.md)
+    requires a `cuda-backend` build plus an NVIDIA driver + device and
+    currently supports **FM prediction only**: fitting rejects it — fit with
+    "rust_cpu", then `set_params(backend="cuda")` for inference. There is
+    deliberately no silent CPU fallback.
     """
     if backend not in ("rust_cpu", "cuda"):
         raise ValueError(f"unknown backend {backend!r}; expected 'rust_cpu' or 'cuda'")
@@ -63,9 +63,18 @@ def _validate_backend(backend):
                 "build/machine has neither (see docs/gpu_backend_plan.md)"
             )
         raise NotImplementedError(
-            "backend='cuda' has no kernels yet: FM/FFM/FwFM prediction and "
-            "training currently run only on backend='rust_cpu' "
-            "(docs/gpu_backend_plan.md tracks the CUDA milestones)"
+            "backend='cuda' supports FM prediction only: fit with "
+            "backend='rust_cpu', then set_params(backend='cuda') for inference "
+            "(docs/gpu_backend_plan.md tracks CUDA training)"
+        )
+
+
+def _predict_backend_guard(backend, model):
+    """FFM/FwFM prediction has no CUDA kernel yet; never fall back silently."""
+    if backend == "cuda":
+        raise NotImplementedError(
+            f"backend='cuda' supports FM prediction only; {model} prediction "
+            "runs on backend='rust_cpu' (docs/gpu_backend_plan.md)"
         )
 
 
@@ -321,7 +330,7 @@ class _FMBase(BaseEstimator, ModelIOMixin):
     def _raw_scores(self, X):
         check_is_fitted(self)
         X = _validate_X(self, X, reset=False)
-        return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_)
+        return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_, backend=self.backend)
 
     def bi_interaction(self, X):
         """Bi-interaction pooled features from the fitted factors: the k-dim
@@ -645,11 +654,13 @@ class FMClassifier(ClassifierMixin, _FMBase):
         if self.V_.ndim == 3:  # multiclass: per-class FM logits -> (n, n_classes)
             return np.column_stack(
                 [
-                    _backend.fm_predict_fast(X, float(self.w0_[c]), self.w_[c], self.V_[c])
+                    _backend.fm_predict_fast(
+                        X, float(self.w0_[c]), self.w_[c], self.V_[c], backend=self.backend
+                    )
                     for c in range(self.V_.shape[0])
                 ]
             )
-        return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_)
+        return _backend.fm_predict_fast(X, self.w0_, self.w_, self.V_, backend=self.backend)
 
     def predict_proba(self, X):
         scores = self.decision_function(X)

@@ -52,8 +52,24 @@ def _prep_csr(X):
     )
 
 
-def fm_predict_fast(X, w0, w, V):
-    """FM prediction (math_spec.md), Rust-accelerated when available."""
+def fm_predict_fast(X, w0, w, V, backend="rust_cpu"):
+    """FM prediction (math_spec.md), Rust-accelerated when available.
+
+    `backend="cuda"` runs the CUDA CSR kernel (dense X is converted;
+    transfer-inclusive, tolerance-based parity vs the CPU paths — see
+    docs/gpu_backend_plan.md); it requires `has_cuda()` and never falls back
+    silently."""
+    if backend == "cuda":
+        if not has_cuda():
+            raise RuntimeError(
+                "backend='cuda' requires modern_fm built with the `cuda-backend` "
+                "Cargo feature and an NVIDIA GPU + driver at runtime"
+            )
+        w = _prep_vec(w)
+        V = _prep_dense(V)
+        Xc = X if sp.issparse(X) else sp.csr_matrix(np.asarray(X, dtype=np.float64))
+        indptr, indices, data, n_features = _prep_csr(Xc)
+        return _rust.fm_predict_cuda_csr(indptr, indices, data, n_features, float(w0), w, V)
     if _rust is None:
         return _reference.fm_predict_fast(X, w0, w, V)
     w = _prep_vec(w)

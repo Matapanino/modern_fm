@@ -1387,9 +1387,42 @@ fn has_cuda() -> bool {
     }
 }
 
+/// FM CSR prediction on CUDA (docs/gpu_backend_plan.md milestone 1). Same
+/// input contract as fm_predict_fast_csr; CSR structure is validated on the
+/// CPU first, CUDA errors become RuntimeError. Registered only in
+/// cuda-backend builds; `_backend` guards calls with `has_cuda()`.
+#[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn fm_predict_cuda_csr<'py>(
+    py: Python<'py>,
+    indptr: PyReadonlyArray1<'py, i64>,
+    indices: PyReadonlyArray1<'py, i64>,
+    data: PyReadonlyArray1<'py, f64>,
+    n_features: usize,
+    w0: f64,
+    w: PyReadonlyArray1<'py, f64>,
+    v: PyReadonlyArray2<'py, f64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let k = v.shape()[1];
+    let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
+    let w_s = w.as_slice()?;
+    check_w_v_fm(n_features, w_s, v.shape())?;
+    let v_s = v.as_slice()?;
+    let out = py.allow_threads(|| -> Result<Vec<f64>, String> {
+        CsrView::new(indptr_s, indices_s, data_s, n_features)?;
+        cuda::fm::predict_csr(indptr_s, indices_s, data_s, w_s, v_s, w0, k)
+    });
+    Ok(out
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?
+        .into_pyarray(py))
+}
+
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(has_cuda, m)?)?;
+    #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+    m.add_function(wrap_pyfunction!(fm_predict_cuda_csr, m)?)?;
     m.add_function(wrap_pyfunction!(fm_predict_fast_dense, m)?)?;
     m.add_function(wrap_pyfunction!(fm_predict_fast_csr, m)?)?;
     m.add_function(wrap_pyfunction!(ffm_predict_dense, m)?)?;

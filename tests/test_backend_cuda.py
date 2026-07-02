@@ -27,12 +27,34 @@ def test_backend_cuda_errors_clearly(rng, cls):
     X, y = _xy(rng)
     model = cls(backend="cuda", max_iter=2)
     if _backend.has_cuda():
-        # CUDA present but no kernels yet: the exact unsupported surface
-        with pytest.raises(NotImplementedError, match="no kernels yet"):
+        # CUDA present: fitting names the exact unsupported surface
+        with pytest.raises(NotImplementedError, match="FM prediction only"):
             model.fit(X, y)
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
             model.fit(X, y)
+
+
+def test_fm_predict_cuda_requires_cuda(rng):
+    """The predict-time CUDA entry never falls back to CPU silently."""
+    X, y = _xy(rng)
+    m = FMClassifier(max_iter=3, random_state=0).fit(X, y)
+    m.set_params(backend="cuda")
+    if _backend.has_cuda():
+        p = m.decision_function(X)
+        assert p.shape == (X.shape[0],)
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            m.decision_function(X)
+
+
+@pytest.mark.parametrize("cls", [FFMClassifier, FwFMClassifier])
+def test_ffm_fwfm_predict_cuda_not_implemented(rng, cls):
+    X, y = _xy(rng)
+    m = cls(max_iter=3, random_state=0).fit(X, y)
+    m.set_params(backend="cuda")
+    with pytest.raises(NotImplementedError, match="FM prediction only"):
+        m.decision_function(X)
 
 
 def test_backend_bogus_still_valueerror(rng):

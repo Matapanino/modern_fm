@@ -34,7 +34,7 @@ from ._reference_train import (
     new_ftrl_state_fwfm,
 )
 from .ffm import _FFMBase
-from .fm import _check_X, _combine_weights, _smooth, _validate_X
+from .fm import _check_X, _combine_weights, _predict_backend_guard, _smooth, _validate_X
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss
 
 
@@ -415,6 +415,7 @@ class FwFMClassifier(ClassifierMixin, _FwFMBase):
         return self._store_fitted(w0, w, V, R, n_features, n_iter, multiclass=True)
 
     def decision_function(self, X):
+        _predict_backend_guard(self.backend, "FwFM")
         check_is_fitted(self)
         X = _validate_X(self, X, reset=False)
         if self.V_.ndim == 3:  # multiclass: per-class FwFM logits -> (n, n_classes)

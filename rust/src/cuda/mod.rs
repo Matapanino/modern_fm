@@ -6,6 +6,8 @@
 //! machines. Kernels land separately (FM CSR prediction first) and merge only
 //! after validation on a real GPU.
 
+pub mod fm;
+
 /// True when a CUDA driver can be loaded and at least one device exists.
 /// Every failure mode (no libcuda, no device, init error) reports
 /// unavailable rather than erroring.
