@@ -191,11 +191,14 @@ freeze. Shipping this milestone = tagging v1.0.0.
     miscalibrated data (label-smoothing compression, sigmoid + isotonic) and
     compatibility for FM/FFM/FwFM; `examples/calibration.py` +
     `docs/api_design.md` "Probability calibration" section.
-- [ ] **Model inspection (top interactions)** — strongest learned pairwise
+- [x] **Model inspection (top interactions)** — strongest learned pairwise
   interactions. _Priority: P1._
-  - DoD: API returning top-`|<v_i, v_j>|` feature pairs for a fitted FM/FFM
-    (e.g. `top_interactions(k)`); tested on a synthetic model with a known
-    dominant pair; docs + example.
+  - DoD met: `top_interactions(n_top, class_idx=None)` on all five
+    estimators (FM `|<v_i, v_j>|`, FwFM r-weighted, FFM field-aware slots;
+    exact blockwise scan in `python/modern_fm/_inspect.py`); planted
+    dominant-pair tests + blockwise-vs-naive parity
+    (`tests/test_top_interactions.py`); `examples/top_interactions.py` +
+    api_design section.
 - [ ] **Real-data benchmark** — Criteo/Avazu *sample* (not full). _Priority: P1._
   - DoD: `benchmarks/bench_criteo_like.py` reporting test AUC + fit time on a
     small vendored/downloaded sample; README results table; fixed seeds + machine

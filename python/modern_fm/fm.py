@@ -27,7 +27,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.utils.multiclass import check_classification_targets, unique_labels
 from sklearn.utils.validation import check_consistent_length, column_or_1d, validate_data
 
-from . import _backend
+from . import _backend, _inspect
 from ._base import ModelIOMixin, check_is_fitted
 from ._early_stop import normalize_eval_set, run_epochs, split_indices
 from ._partial import make_opt_state, partial_fit_classes, warm_resume
@@ -205,11 +205,49 @@ def _resolve_n_jobs(n_jobs):
     return int(n_jobs)
 
 
+def _select_class_slice(arrays, multiclass, class_idx, what):
+    """Pick one class's parameter arrays for inspection APIs.
+
+    `arrays` is a tuple of per-model arrays whose leading axis is the class
+    when `multiclass`. Multiclass models require `class_idx`; binary and
+    regression models reject it."""
+    if multiclass:
+        if class_idx is None:
+            raise ValueError(
+                f"this {what} is multiclass: pass class_idx (0 <= class_idx < "
+                f"{arrays[0].shape[0]}) to inspect one class's interactions"
+            )
+        return tuple(a[class_idx] for a in arrays)
+    if class_idx is not None:
+        raise ValueError("class_idx is only valid for a multiclass model")
+    return arrays
+
+
+def _check_n_top(n_top):
+    if not (isinstance(n_top, (int, np.integer)) and n_top >= 1):
+        raise ValueError(f"n_top must be a positive integer, got {n_top!r}")
+
+
 class _FMBase(BaseEstimator, ModelIOMixin):
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()
         tags.input_tags.sparse = True
         return tags
+
+    def top_interactions(self, n_top=10, class_idx=None):
+        """The `n_top` strongest learned pairwise interactions.
+
+        Returns a list of ``(i, j, strength)`` tuples (feature indices,
+        ``i < j``) sorted by descending ``strength = |<V_i, V_j>|`` — the
+        magnitude of the learned pairwise coefficient of ``x_i x_j``
+        (docs/math_spec.md). Exact full upper-triangle scan, O(n_features²
+        · n_factors). Multiclass models require ``class_idx``. Map indices to
+        names via ``feature_names_in_`` when fitted on a DataFrame.
+        """
+        check_is_fitted(self)
+        _check_n_top(n_top)
+        (V,) = _select_class_slice((self.V_,), self.V_.ndim == 3, class_idx, "FM")
+        return _inspect.fm_top_interactions(V, n_top)
 
     def _validate_common(self):
         if self.optimizer not in OPTIMIZERS:

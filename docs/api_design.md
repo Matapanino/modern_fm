@@ -197,6 +197,25 @@ cal.predict_proba(X_new)
   an ECE/Brier-improvement pin on synthetically miscalibrated data); see
   `examples/calibration.py` for a reliability-table walkthrough.
 
+## Model inspection: top interactions
+
+Every FM/FFM/FwFM estimator exposes the strongest learned pairwise
+interactions of a fitted model:
+
+```python
+model.top_interactions(n_top=10)                # [(i, j, strength), ...] desc
+model.top_interactions(n_top=10, class_idx=1)   # multiclass: one class at a time
+```
+
+`strength` is the magnitude of the learned pairwise coefficient of
+`x_i x_j` (docs/math_spec.md): `|<V_i, V_j>|` for FM,
+`|r[min(f_i,f_j), max(f_i,f_j)] * <V_i, V_j>|` for FwFM, and
+`|<V[i, f_j], V[j, f_i]>|` for FFM. Pairs are feature-index tuples with
+`i < j`; map indices to names via `feature_names_in_` when fitted on a
+DataFrame. The scan is exact (full upper triangle, blockwise BLAS,
+O(n_features² · n_factors)) — fine up to tens of thousands of features.
+See `examples/top_interactions.py`.
+
 ## Learned attributes (after fit)
 
 - `w0_` (float), `w_` (n_features,), `V_`
