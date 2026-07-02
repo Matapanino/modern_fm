@@ -1,5 +1,5 @@
-"""CUDA vs Rust-CPU FM/FFM prediction + binary/multiclass training benchmark
-(docs/gpu_backend_plan.md).
+"""CUDA vs Rust-CPU FM/FFM/FwFM prediction + binary/multiclass training
+benchmark (docs/gpu_backend_plan.md).
 
 Transfer-INCLUSIVE: every CUDA prediction call copies the CSR arrays +
 parameters to the device and the scores back; a CUDA training call uploads the
@@ -172,6 +172,74 @@ def bench_ffm_train(rng, quick):
         print(f"{label:>10} {cpu * 1e3:>10.1f} {cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x")
 
 
+def bench_fwfm_predict(rng, quick):
+    n_rows, d = 100_000, 100_000
+    nnz_grid = (8, 32) if quick else (8, 16, 32)
+    fields_grid = (8,) if quick else (8, 32)
+    k_grid = (8,) if quick else (4, 8, 16)
+    print()
+    print("FwFM prediction (Rust CPU vs CUDA, transfer-inclusive; CPU FwFM is serial)")
+    print(
+        f"{'rows':>10} {'nnz/row':>8} {'fields':>7} {'k':>4} "
+        f"{'cpu ms':>10} {'cuda ms':>10} {'speedup':>8}"
+    )
+    for avg_nnz in nnz_grid:
+        X = make_csr(n_rows, d, avg_nnz)
+        for n_fields in fields_grid:
+            field_ids = rng.integers(0, n_fields, size=d)
+            for k in k_grid:
+                w0, w = 0.1, rng.normal(size=d)
+                V = rng.normal(size=(d, k))
+                R = rng.normal(size=(n_fields, n_fields))
+                cpu = timed(lambda: _backend.fwfm_predict(X, field_ids, w0, w, V, R))
+                cuda = timed(
+                    lambda: _backend.fwfm_predict(X, field_ids, w0, w, V, R, backend="cuda")
+                )
+                print(
+                    f"{n_rows:>10} {avg_nnz:>8} {n_fields:>7} {k:>4} "
+                    f"{cpu * 1e3:>10.1f} {cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x"
+                )
+
+
+def bench_fwfm_train(rng, quick):
+    """One binary-logistic FwFM epoch. Gradients are FM-shaped (features + the
+    tiny R group), so the CUDA path rides the compact touched-coordinate
+    machinery; CPU baseline is serial (FwFM has no n_jobs)."""
+    n_rows, d, avg_nnz, n_fields, k = 100_000, 100_000, 32, 8, 8
+    X = make_csr(n_rows, d, avg_nnz)
+    y = (rng.random(n_rows) > 0.5).astype(np.float64)
+    field_ids = rng.integers(0, n_fields, size=d)
+    params = (
+        0.0, rng.normal(size=d) * 0.01, rng.normal(size=(d, k)) * 0.01,
+        np.ones((n_fields, n_fields)),
+    )
+    row_orders = rng.permutation(n_rows).astype(np.int64)[None, :]
+    kwargs = dict(
+        loss="logistic", optimizer="adagrad", learning_rate=0.05,
+        l2_linear=1e-6, l2_factors=1e-6, row_orders=row_orders,
+    )
+    batch_grid = (1024, n_rows) if quick else (256, 1024, 8192, n_rows)
+    print()
+    print(
+        "FwFM training, 1 epoch (Rust CPU serial vs CUDA accumulation + CPU flush; "
+        f"rows={n_rows}, nnz/row={avg_nnz}, fields={n_fields}, k={k})"
+    )
+    print(f"{'batch':>10} {'cpu ms':>10} {'cuda ms':>10} {'speedup':>8}")
+    for bs in batch_grid:
+        cpu = timed(
+            lambda: _backend.fwfm_fit(X, y, field_ids, params, batch_size=bs, **kwargs),
+            repeats=3,
+        )
+        cuda = timed(
+            lambda: _backend.fwfm_fit(
+                X, y, field_ids, params, batch_size=bs, backend="cuda", **kwargs
+            ),
+            repeats=3,
+        )
+        label = "full" if bs == n_rows else bs
+        print(f"{label:>10} {cpu * 1e3:>10.1f} {cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x")
+
+
 def bench_fm_mc_train(rng, quick):
     """One softmax multiclass FM epoch (gpu_backend_plan milestone 5): all C
     class gradients accumulate in one kernel launch per batch (C-stacked
@@ -279,8 +347,10 @@ def main():
     rng = np.random.default_rng(0)
     bench_fm(rng, quick)
     bench_ffm(rng, quick)
+    bench_fwfm_predict(rng, quick)
     bench_fm_train(rng, quick)
     bench_ffm_train(rng, quick)
+    bench_fwfm_train(rng, quick)
     bench_fm_mc_train(rng, quick)
     bench_ffm_mc_train(rng, quick)
 

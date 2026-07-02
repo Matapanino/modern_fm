@@ -41,23 +41,16 @@ from ._reference_train import (
 )
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
 
-_CUDA_SCOPE = (
-    "backend='cuda' supports FM/FFM prediction and FM/FFM "
-    "binary/regression/multiclass training"
-)
-
 
 def _validate_backend(backend):
     """Validate the `backend` constructor parameter at fit time.
 
-    "rust_cpu" is the (only complete) default. "cuda" (docs/gpu_backend_plan.md)
-    requires a `cuda-backend` build plus an NVIDIA driver + device (compute
-    capability >= 6.0) and supports FM/FFM prediction plus FM/FFM
-    binary/regression/multiclass training; the per-cell guards
-    (`_fit_backend_guard` / `_predict_backend_guard`) reject everything else
-    (FwFM). There is deliberately no silent CPU fallback. CUDA *training* is
-    nondeterministic run-to-run (atomic gradient accumulation) — the CPU
-    backend keeps exact seeded reproducibility.
+    "rust_cpu" is the default. "cuda" (docs/gpu_backend_plan.md) requires a
+    `cuda-backend` build plus an NVIDIA driver + device (compute capability
+    >= 6.0) and covers every prediction and training cell (FM/FFM/FwFM,
+    binary/regression/multiclass). There is deliberately no silent CPU
+    fallback. CUDA *training* is nondeterministic run-to-run (atomic gradient
+    accumulation) — the CPU backend keeps exact seeded reproducibility.
     """
     if backend not in ("rust_cpu", "cuda"):
         raise ValueError(f"unknown backend {backend!r}; expected 'rust_cpu' or 'cuda'")
@@ -66,25 +59,6 @@ def _validate_backend(backend):
             "backend='cuda' requires modern_fm built with the `cuda-backend` "
             "Cargo feature and an NVIDIA GPU + driver at runtime; this "
             "build/machine has neither (see docs/gpu_backend_plan.md)"
-        )
-
-
-def _fit_backend_guard(backend, cell):
-    """Reject the training cells that have no CUDA kernel; never fall back
-    silently (FwFM training runs on the CPU)."""
-    if backend == "cuda":
-        raise NotImplementedError(
-            f"{_CUDA_SCOPE}; {cell} runs on backend='rust_cpu' "
-            "(docs/gpu_backend_plan.md)"
-        )
-
-
-def _predict_backend_guard(backend, model):
-    """FwFM prediction has no CUDA kernel yet; never fall back silently."""
-    if backend == "cuda":
-        raise NotImplementedError(
-            f"{_CUDA_SCOPE}; {model} prediction runs on backend='rust_cpu' "
-            "(docs/gpu_backend_plan.md)"
         )
 
 

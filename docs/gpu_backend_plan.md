@@ -51,7 +51,18 @@ Recommended order:
    resident parameters alone are `C * n * (k + 1)` doubles (FM) /
    `C * n * (n_fields * k + 1)` doubles (FFM) — e.g. FFM n=1e6, F=10, k=8,
    C=10 ≈ 6.5 GB; allocation failures surface as clear `RuntimeError`s.
-6. Later: optimizer flush on GPU, FwFM cells.
+6. FwFM prediction + binary/regression + multiclass training. — **done
+   (v1.1 work):** `rust/src/cuda/fwfm.rs` (prediction: FFM kernel geometry
+   with FM-shaped V and the R pair weight) + `fwfm_train.rs` (training:
+   FFM-style strided pair loops over FM-style compact feature slots — both
+   pair endpoints are row nonzeros, so the per-nonzero slot map covers every
+   gv write; `gr` is a dense `n_fields^2` buffer, memset per batch and
+   downloaded in full; multiclass follows the FM milestone-5 pattern with
+   C-stacked buffers + dense `(C, F, F)` gr). The CPU flush — including the
+   R group (`GroupStateMut`/`McGroupState`) — is reused verbatim, so every
+   optimizer, R regularization, ES and `partial_fit` ride through. With this
+   milestone **every prediction and training cell is CUDA-covered**.
+7. Later: optimizer flush on GPU.
 
 The first target should be large sparse CTR-style batches. Small batches,
 `batch_size=1`, and small dense toy inputs should stay on CPU because kernel
