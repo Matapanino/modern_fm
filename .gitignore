@@ -23,3 +23,4 @@ Cargo.lock
 .idea/
 .vscode/
 *.swp
+site/

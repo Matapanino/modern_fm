@@ -6,6 +6,11 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **Documentation site (v1.0 roadmap item)**: mkdocs-material site over the
+  existing design docs plus a new install/quickstart landing page
+  (`docs/index.md`), auto-deployed to GitHub Pages by
+  `.github/workflows/docs.yml` on doc changes; linked from the README
+  (https://matapanino.github.io/modern_fm/).
 - **Real-data CTR benchmark (v1.0 roadmap item)**:
   `benchmarks/bench_criteo_like.py` — the KDD Cup 2012 track-2 click sample
   from OpenML (zero-credential; the original Criteo/Avazu samples are gated

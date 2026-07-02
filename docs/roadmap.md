@@ -210,10 +210,14 @@ freeze. Shipping this milestone = tagging v1.0.0.
     stopping (no tuning-to-benchmark); README table with AUC + fit time +
     machine specs (honest result: factor models match, not beat, LR on this
     singleton-heavy sample; FwFM closest at 0.6891 vs LR 0.6908).
-- [ ] **Documentation site** — published API/usage docs. _Priority: P1._
-  - DoD: mkdocs-material (recommended) or Sphinx — install, quickstart, API
-    reference, math specs, examples; GitHub Pages auto-deploy via CI; linked from
-    README.
+- [x] **Documentation site** — published API/usage docs. _Priority: P1._
+  - DoD met: mkdocs-material (`mkdocs.yml` + `docs/index.md` with install +
+    quickstart + model table; nav covers the API reference, data format, math
+    specs, GPU backend and project docs; examples linked);
+    `.github/workflows/docs.yml` auto-deploys to GitHub Pages (`gh-pages`
+    branch) on pushes to main touching docs; README links the site
+    (https://matapanino.github.io/modern_fm/). One-time repo setting after
+    the first deploy: Pages -> deploy from branch `gh-pages`.
 - [ ] **API freeze + backward-compat policy** — _Priority: P0._
   - DoD: audit public `__all__` (estimators, encoder, libffm I/O, errors); every
     public estimator + constructor param documented in `docs/api_design.md`;
