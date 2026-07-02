@@ -320,6 +320,112 @@ def test_fm_partial_fit_cuda():
     )
 
 
+def _ffm_train_setup(seed=0, n=100, d=25, n_fields=4, k=3, epochs=3):
+    rng = np.random.default_rng(seed)
+    X = random_sparse_dense_X(rng, n, d, density=0.3)
+    margin = X @ rng.normal(size=d)
+    field_ids = rng.integers(0, n_fields, size=d)
+    params = (0.0, rng.normal(size=d) * 0.01, rng.normal(size=(d, n_fields, k)) * 0.01)
+    row_orders = np.vstack([rng.permutation(n) for _ in range(epochs)]).astype(np.int64)
+    return X, margin, field_ids, params, row_orders
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+@pytest.mark.parametrize("loss", ["logistic", "squared"])
+@pytest.mark.parametrize("batch_size", [1, 7, 100])
+def test_ffm_train_accumulation_parity(optimizer, loss, batch_size):
+    """CUDA FFM batch-gradient accumulation + CPU optimizer flush vs the
+    all-CPU kernel: same init and row_orders, compare final predictions."""
+    X, margin, field_ids, params, row_orders = _ffm_train_setup()
+    y = (margin > 0).astype(np.float64) if loss == "logistic" else margin
+    kwargs = dict(
+        loss=loss, optimizer=optimizer, learning_rate=0.1,
+        l2_linear=1e-4, l2_factors=1e-4, row_orders=row_orders, batch_size=batch_size,
+    )
+    if optimizer == "ftrl":
+        kwargs.update(l1_linear=0.01, l1_factors=0.001)
+    w0_c, w_c, V_c = _backend.ffm_fit(X, y, field_ids, params, **kwargs)
+    w0_g, w_g, V_g = _backend.ffm_fit(X, y, field_ids, params, backend="cuda", **kwargs)
+    pred_c = _backend.ffm_predict(X, field_ids, w0_c, w_c, V_c)
+    pred_g = _backend.ffm_predict(X, field_ids, w0_g, w_g, V_g)
+    np.testing.assert_allclose(pred_g, pred_c, rtol=TRAIN_RTOL, atol=TRAIN_ATOL)
+
+
+def test_ffm_train_sample_weight_parity():
+    X, margin, field_ids, params, row_orders = _ffm_train_setup(seed=1)
+    y = (margin > 0).astype(np.float64)
+    sw = np.random.default_rng(1).uniform(0.5, 2.0, size=len(y))
+    kwargs = dict(
+        loss="logistic", optimizer="adagrad", learning_rate=0.1,
+        l2_linear=1e-4, l2_factors=1e-4, row_orders=row_orders, batch_size=8,
+        sample_weight=sw,
+    )
+    w0_c, w_c, V_c = _backend.ffm_fit(X, y, field_ids, params, **kwargs)
+    w0_g, w_g, V_g = _backend.ffm_fit(X, y, field_ids, params, backend="cuda", **kwargs)
+    np.testing.assert_allclose(
+        _backend.ffm_predict(X, field_ids, w0_g, w_g, V_g),
+        _backend.ffm_predict(X, field_ids, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_ffm_train_ftrl_l1_yields_exact_zeros_on_cuda():
+    X, margin, field_ids, params, row_orders = _ffm_train_setup(seed=2, epochs=5)
+    y = (margin > 0).astype(np.float64)
+    _w0, w, _V = _backend.ffm_fit(
+        X, y, field_ids, params, loss="logistic", optimizer="ftrl", learning_rate=0.5,
+        l2_linear=0.0, l2_factors=0.0, l1_linear=0.5, l1_factors=0.1,
+        row_orders=row_orders, batch_size=4, backend="cuda",
+    )
+    assert np.sum(w == 0.0) > 0
+
+
+@pytest.mark.parametrize("cls", [FFMClassifier, FFMRegressor])
+def test_ffm_estimator_fit_cuda_end_to_end(cls):
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 150, 20, density=0.3)
+    margin = X @ rng.normal(size=20)
+    y = (margin > 0).astype(int) if cls is FFMClassifier else margin
+    common = dict(n_factors=3, max_iter=5, random_state=0, dtype="float64", batch_size=16)
+    cpu = cls(**common).fit(X, y)
+    gpu = cls(backend="cuda", **common).fit(X, y)
+    score = "decision_function" if cls is FFMClassifier else "predict"
+    np.testing.assert_allclose(
+        getattr(gpu, score)(X), getattr(cpu, score)(X), rtol=1e-6, atol=1e-6
+    )
+
+
+def test_ffm_early_stopping_fit_cuda():
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 200, 20, density=0.3)
+    y = (X @ rng.normal(size=20) > 0).astype(int)
+    common = dict(
+        n_factors=3, max_iter=5, random_state=0, dtype="float64",
+        early_stopping=True, patience=5, batch_size=32,
+    )
+    cpu = FFMClassifier(**common).fit(X, y)
+    gpu = FFMClassifier(backend="cuda", **common).fit(X, y)
+    assert gpu.n_iter_ == cpu.n_iter_
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+
+
+def test_ffm_partial_fit_cuda():
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 160, 20, density=0.3)
+    y = (X @ rng.normal(size=20) > 0).astype(int)
+    common = dict(n_factors=3, max_iter=2, random_state=0, dtype="float64")
+    cpu = FFMClassifier(**common)
+    gpu = FFMClassifier(backend="cuda", **common)
+    for m in (cpu, gpu):
+        m.partial_fit(X[:80], y[:80], classes=[0, 1])
+        m.partial_fit(X[80:], y[80:])
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+
+
 def test_repeated_calls_reuse_cached_context():
     """Alternating FM/FFM CUDA predicts: a functional regression test for the
     process-wide context/module cache (lifetime/refcount bugs would surface as

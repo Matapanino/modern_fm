@@ -96,18 +96,22 @@ pub fn predict_csr(
 /// `gw[i]` (linear), and `gv` per touched (feature, field) slot — then `flush`
 /// applies one update per touched coordinate with the batch-mean gradient plus
 /// lazy L2. `gv` and the slot index are laid out exactly like `v`.
-struct FfmGradAccum {
-    g_w0: f64,
-    gw: Vec<f64>,             // n_features
-    gv: Vec<f64>,             // n_features * n_fields * k (indexed like v)
-    touched_feat: Vec<usize>,
-    seen_feat: Vec<bool>,     // n_features
-    touched_slot: Vec<usize>, // slot = feature * n_fields + field
-    seen_slot: Vec<bool>,     // n_features * n_fields
+///
+/// `pub(crate)` (fields included) so the CUDA training path can load a
+/// device-accumulated batch into the same buffers and reuse `flush` — the
+/// optimizer semantics live in exactly one place.
+pub(crate) struct FfmGradAccum {
+    pub(crate) g_w0: f64,
+    pub(crate) gw: Vec<f64>,             // n_features
+    pub(crate) gv: Vec<f64>,             // n_features * n_fields * k (indexed like v)
+    pub(crate) touched_feat: Vec<usize>,
+    pub(crate) seen_feat: Vec<bool>,     // n_features
+    pub(crate) touched_slot: Vec<usize>, // slot = feature * n_fields + field
+    pub(crate) seen_slot: Vec<bool>,     // n_features * n_fields
 }
 
 impl FfmGradAccum {
-    fn new(n_features: usize, n_fields: usize, k: usize) -> Self {
+    pub(crate) fn new(n_features: usize, n_fields: usize, k: usize) -> Self {
         Self {
             g_w0: 0.0,
             gw: vec![0.0; n_features],
@@ -198,7 +202,7 @@ impl FfmGradAccum {
     /// Apply one update per touched coordinate (w0, then w, then V slots), then
     /// clear the touched entries back to zero so the buffers are reusable.
     #[allow(clippy::too_many_arguments)]
-    fn flush(
+    pub(crate) fn flush(
         &mut self,
         bsz: f64,
         w0: &mut f64,

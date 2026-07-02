@@ -97,20 +97,27 @@ FFM prediction (Rust CPU vs CUDA, transfer-inclusive; CPU FFM is serial)
 
 FM training, 1 epoch (Rust CPU n_jobs=1 vs CUDA accumulation + CPU flush; rows=100000, nnz/row=32, k=8)
      batch     cpu ms    cuda ms  speedup
-       256      813.2      829.1     1.0x
-      1024      575.2      755.2     0.8x
-      8192      342.9      586.0     0.6x
-      full      183.8      135.8     1.4x
+       256      550.8      768.9     0.7x
+      1024      488.1      619.4     0.8x
+      8192      334.9      341.6     1.0x
+      full      209.3      135.9     1.5x
+
+FFM training, 1 epoch (Rust CPU n_jobs=1 vs CUDA accumulation + CPU flush; rows=100000, nnz/row=32, fields=8, k=4)
+     batch     cpu ms    cuda ms  speedup
+       256     4281.4     4204.7     1.0x
+      1024     4100.6     3669.7     1.1x
+      8192     2703.1     2064.9     1.3x
+      full     1784.5      500.0     3.6x
 ```
 
-Training notes (honesty): the training table is from a later same-day run
-with device-resident parameters + compact touched-coordinate transfers for
-small batches; that cut the CUDA time at batch 256 from 2256 ms (dense
-transfers, previous run) to 829 ms — small batches went from a heavy loss to
-break-even, now bounded by kernel-launch overhead and low occupancy rather
-than transfers. Colab T4 *instances vary a lot* (the CPU column moved up to
-~2x between same-day runs), so only same-run columns are comparable. The win
-remains largest at full batch.
+Training notes (honesty): both training tables are from one run (parameters
+device-resident, touched-coordinate transfers). FM training is bounded by
+kernel-launch overhead / low occupancy at small batches (an earlier
+dense-transfer design was 0.3x at batch 256; the compact path brought CUDA
+time from 2256 ms to ~800 ms there). FFM training's higher O(z²k) arithmetic
+intensity suits the GPU better — it breaks even at batch 256 and reaches 3.6x
+at full batch. Colab T4 *instances vary a lot* (CPU columns moved up to ~2x
+between same-day runs), so only same-run columns are comparable.
 
 See `docs/benchmark_plan.md` for goals and rules (fixed seeds, report machine
 specs, do not tune the library to a benchmark).

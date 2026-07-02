@@ -17,6 +17,7 @@ use cudarc::driver::{CudaContext, CudaModule};
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 
 pub mod ffm;
+pub mod ffm_train;
 pub mod fm;
 pub mod fm_train;
 
@@ -54,10 +55,11 @@ pub(crate) fn gpu() -> Result<(Arc<CudaContext>, Arc<CudaModule>), String> {
     if slot.is_none() {
         let ctx = CudaContext::new(0).map_err(|e| format!("CUDA context creation failed: {e:?}"))?;
         let src = format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             fm::KERNEL_SRC,
             ffm::KERNEL_SRC,
-            fm_train::KERNEL_SRC
+            fm_train::KERNEL_SRC,
+            ffm_train::KERNEL_SRC
         );
         // compute_60: the training kernel's atomicAdd(double*, double) needs
         // compute capability >= 6.0 (Pascal, 2016). The PTX JIT-compiles

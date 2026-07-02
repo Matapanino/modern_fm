@@ -62,15 +62,12 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
         tags.input_tags.sparse = True
         return tags
 
-    _cuda_cell = "FFM training"  # cell named by the backend='cuda' fit guard
-
     def _validate_common(self):
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
         if self.dtype not in ("float32", "float64"):
             raise ValueError(f"unknown dtype {self.dtype!r}; expected 'float32' or 'float64'")
         _validate_backend(self.backend)
-        _fit_backend_guard(self.backend, self._cuda_cell)
         if not (isinstance(self.batch_size, (int, np.integer)) and self.batch_size >= 1):
             raise ValueError(f"batch_size must be a positive integer, got {self.batch_size!r}")
         _resolve_n_jobs(self.n_jobs)  # validate (raises on a bad n_jobs)
@@ -124,6 +121,7 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
             batch_size=self.batch_size,
             n_jobs=_resolve_n_jobs(self.n_jobs),
             sample_weight=sample_weight,
+            backend=self.backend,
             **opt,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
@@ -190,6 +188,7 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
                 row_orders=row_orders[e : e + 1], ftrl_beta=self.ftrl_beta,
                 batch_size=self.batch_size, n_jobs=_resolve_n_jobs(self.n_jobs),
                 sample_weight=sw_tr, state=state, adam_state=adam_state, ftrl_state=ftrl_state,
+                backend=self.backend,
             )
 
         def evaluate():
@@ -270,7 +269,8 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
         else:
             w0, w, V = _backend.ffm_fit(
                 X, y, self.field_ids_, (w0, w, V), loss=loss,
-                n_jobs=_resolve_n_jobs(self.n_jobs), **common, **self._opt_state,
+                n_jobs=_resolve_n_jobs(self.n_jobs), backend=self.backend,
+                **common, **self._opt_state,
             )
             self.w0_ = float(w0)
         self.w_ = w.astype(out_dtype)
@@ -359,6 +359,7 @@ class FFMClassifier(ClassifierMixin, _FFMBase):
                 "need at least 2 classes."
             )
         if self.classes_.shape[0] > 2 or self.loss == "softmax":
+            _fit_backend_guard(self.backend, "multiclass FFM training")
             if self.early_stopping or eval_set is not None:
                 eval_val = None
                 if eval_set is not None:
@@ -399,6 +400,7 @@ class FFMClassifier(ClassifierMixin, _FFMBase):
         n_classes = self.classes_.shape[0]
         multiclass = n_classes > 2 or self.loss == "softmax"
         if multiclass:
+            _fit_backend_guard(self.backend, "multiclass FFM training")
             if not 0.0 <= self.label_smoothing < 1.0:
                 raise ValueError(f"label_smoothing must be in [0, 1), got {self.label_smoothing}")
             y_target = np.searchsorted(self.classes_, y)

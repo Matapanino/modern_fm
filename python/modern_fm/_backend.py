@@ -291,12 +291,24 @@ def ffm_fit(
     X, y, field_ids, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8, ftrl_beta=1.0,
     batch_size=1, n_jobs=1, sample_weight=None, state=None, adam_state=None, ftrl_state=None,
+    backend="rust_cpu",
 ):
     """Train an FFM (loss "logistic" or "squared"); see fm_fit. `batch_size` averages each
     batch's gradient (batch_size=1 is per-row); `n_jobs` (>= 1) splits each batch
     across that many rayon threads (n_jobs=1 matches the serial reference).
     `state` / `adam_state` / `ftrl_state` round-trip the optimizer state across
-    epoch-driven early-stopping calls through the Rust kernel, like fm_fit."""
+    epoch-driven early-stopping calls through the Rust kernel, like fm_fit.
+
+    `backend="cuda"` accumulates each batch's data-gradient on the GPU (V stays
+    device-resident, touched slots scatter back) and keeps the optimizer flush
+    on the CPU (docs/gpu_backend_plan.md milestone 4); it requires
+    `has_cuda()`, ignores `n_jobs`, is nondeterministic run-to-run and never
+    falls back silently."""
+    if backend == "cuda" and not has_cuda():
+        raise RuntimeError(
+            "backend='cuda' requires modern_fm built with the `cuda-backend` "
+            "Cargo feature and an NVIDIA GPU + driver at runtime"
+        )
     if _rust is None:
         return _reference_train.ffm_fit_reference(
             X, y, field_ids, params, loss=loss, optimizer=optimizer, learning_rate=learning_rate,
@@ -318,7 +330,7 @@ def ffm_fit(
         indptr, indices, data, n_features, y, sw, field_ids, w0, acc_w0, w, V, acc_w, acc_v,
         loss, optimizer, learning_rate, l2_linear, l2_factors, beta_1, beta_2, epsilon, row_orders,
         batch_size, n_jobs, l1_linear, l1_factors, ftrl_beta,
-        adam_state=adam_t, ftrl_state=ftrl_t,
+        adam_state=adam_t, ftrl_state=ftrl_t, use_cuda=backend == "cuda",
     )
     if state is not None:
         state[0], state[1], state[2] = acc_w0, acc_w, acc_v

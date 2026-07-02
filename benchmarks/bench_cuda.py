@@ -135,6 +135,43 @@ def bench_fm_train(rng, quick):
         print(f"{label:>10} {cpu * 1e3:>10.1f} {cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x")
 
 
+def bench_ffm_train(rng, quick):
+    """One binary-logistic FFM epoch. The CUDA path keeps V device-resident
+    and moves only touched (feature, field) slots per batch; the host pays the
+    touched-slot enumeration (the pair loop without the k-dot). CPU baseline
+    is n_jobs=1 serial."""
+    n_rows, d, avg_nnz, n_fields, k = 100_000, 100_000, 32, 8, 4
+    X = make_csr(n_rows, d, avg_nnz)
+    y = (rng.random(n_rows) > 0.5).astype(np.float64)
+    field_ids = rng.integers(0, n_fields, size=d)
+    params = (0.0, rng.normal(size=d) * 0.01, rng.normal(size=(d, n_fields, k)) * 0.01)
+    row_orders = rng.permutation(n_rows).astype(np.int64)[None, :]
+    kwargs = dict(
+        loss="logistic", optimizer="adagrad", learning_rate=0.05,
+        l2_linear=1e-6, l2_factors=1e-6, row_orders=row_orders,
+    )
+    batch_grid = (1024, n_rows) if quick else (256, 1024, 8192, n_rows)
+    print()
+    print(
+        "FFM training, 1 epoch (Rust CPU n_jobs=1 vs CUDA accumulation + CPU flush; "
+        f"rows={n_rows}, nnz/row={avg_nnz}, fields={n_fields}, k={k})"
+    )
+    print(f"{'batch':>10} {'cpu ms':>10} {'cuda ms':>10} {'speedup':>8}")
+    for bs in batch_grid:
+        cpu = timed(
+            lambda: _backend.ffm_fit(X, y, field_ids, params, batch_size=bs, **kwargs),
+            repeats=3,
+        )
+        cuda = timed(
+            lambda: _backend.ffm_fit(
+                X, y, field_ids, params, batch_size=bs, backend="cuda", **kwargs
+            ),
+            repeats=3,
+        )
+        label = "full" if bs == n_rows else bs
+        print(f"{label:>10} {cpu * 1e3:>10.1f} {cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x")
+
+
 def main():
     quick = "--quick" in sys.argv  # trimmed grid for short validation runs
     print(f"machine: {platform.platform()} / python {platform.python_version()}")
@@ -150,6 +187,7 @@ def main():
     bench_fm(rng, quick)
     bench_ffm(rng, quick)
     bench_fm_train(rng, quick)
+    bench_ffm_train(rng, quick)
 
 
 if __name__ == "__main__":

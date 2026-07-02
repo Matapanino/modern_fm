@@ -22,11 +22,13 @@ Current state: v0.5.0 is the released version (Rust early-stopping fast path,
 `docs/cuda_validation_runbook.md`). Unreleased v0.6 work on main: CUDA FFM
 CSR prediction (`rust/src/cuda/ffm.rs`) alongside the v0.5 FM kernel, the
 CUDA context + NVRTC module cached process-wide (`rust/src/cuda/mod.rs`),
-and CUDA FM binary/regression training accumulation
-(`rust/src/cuda/fm_train.rs`: GPU batch gradients + the CPU optimizer flush,
-so all optimizers/ES/partial_fit ride through; nondeterministic run-to-run,
-needs compute capability >= 6.0). CUDA supports FM/FFM prediction + FM
-binary/regression training and is never a silent fallback. See `docs/roadmap.md` and
+and CUDA FM + FFM binary/regression training accumulation
+(`rust/src/cuda/fm_train.rs` / `ffm_train.rs`: GPU batch gradients + the CPU
+optimizer flush, so all optimizers/ES/partial_fit ride through;
+device-resident params with touched-only transfers; nondeterministic
+run-to-run, needs compute capability >= 6.0). CUDA supports FM/FFM
+prediction + FM/FFM binary/regression training and is never a silent
+fallback. See `docs/roadmap.md` and
 `docs/gpu_backend_plan.md`. Rust kernels in `rust/` cover
 FM/FFM prediction and training — FM binary (logistic/squared) + multiclass softmax
 and FFM binary (logistic/squared) + multiclass softmax, optimizers

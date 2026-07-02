@@ -44,7 +44,7 @@ from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
 _PHASE4 = "lands in a later phase (see docs/roadmap.md)"
 
 
-_CUDA_SCOPE = "backend='cuda' supports FM/FFM prediction and FM binary/regression training"
+_CUDA_SCOPE = "backend='cuda' supports FM/FFM prediction and FM/FFM binary/regression training"
 
 
 def _validate_backend(backend):

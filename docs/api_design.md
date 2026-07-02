@@ -35,8 +35,8 @@ model = FMClassifier(
     dtype="float32",          # "float32" | "float64"
     backend="rust_cpu",       # or "cuda": requires a cuda-backend build + GPU
                               # (compute capability >= 6.0) and supports FM/FFM
-                              # prediction plus FM binary/regression training
-                              # (multiclass FM, FFM and FwFM training raise);
+                              # prediction plus FM/FFM binary/regression training
+                              # (multiclass and FwFM training raise);
                               # CUDA training is nondeterministic run-to-run —
                               # rust_cpu keeps exact seeded reproducibility;
                               # never a silent CPU fallback (gpu_backend_plan.md)
