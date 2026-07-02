@@ -1,16 +1,19 @@
-"""CUDA FM + FFM prediction parity (docs/gpu_backend_plan.md milestones 1-2).
+"""CUDA FM/FFM prediction + FM training parity (docs/gpu_backend_plan.md
+milestones 1-3).
 
 Skipped entirely without a CUDA build + device — run on a real GPU per
 docs/cuda_validation_runbook.md before merging CUDA kernel changes.
-Tolerance-based (rtol/atol 1e-10): CUDA reduction order is not bit-identical
-to the CPU paths (floating-point addition is not associative).
+Prediction is tolerance-based at rtol/atol 1e-10; training compares final
+predictions at rtol 1e-7 / atol 1e-8 (plan-doc tolerances): CUDA atomics make
+the gradient summation order nondeterministic run-to-run, so training parity
+can never be bit-exact.
 """
 
 import numpy as np
 import pytest
 import scipy.sparse as sp
 from conftest import random_sparse_dense_X
-from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, _backend
+from modern_fm import FFMClassifier, FFMRegressor, FMClassifier, FMRegressor, _backend
 from modern_fm._reference import ffm_predict, fm_predict_fast
 
 pytestmark = pytest.mark.skipif(
@@ -152,6 +155,122 @@ def test_ffm_estimator_inference_flow():
     cpu_pred = r.predict(X)
     r.set_params(backend="cuda")
     np.testing.assert_allclose(r.predict(X), cpu_pred, rtol=1e-6, atol=1e-6)
+
+
+TRAIN_RTOL = 1e-7
+TRAIN_ATOL = 1e-8
+
+
+def _train_setup(seed=0, n=120, d=25, k=4, epochs=3):
+    rng = np.random.default_rng(seed)
+    X = random_sparse_dense_X(rng, n, d, density=0.3)
+    margin = X @ rng.normal(size=d)
+    params = (0.0, rng.normal(size=d) * 0.01, rng.normal(size=(d, k)) * 0.01)
+    row_orders = np.vstack([rng.permutation(n) for _ in range(epochs)]).astype(np.int64)
+    return X, margin, params, row_orders
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+@pytest.mark.parametrize("loss", ["logistic", "squared"])
+@pytest.mark.parametrize("batch_size", [1, 7, 120])
+def test_fm_train_accumulation_parity(optimizer, loss, batch_size):
+    """CUDA batch-gradient accumulation + CPU optimizer flush vs the all-CPU
+    kernel: same init and row_orders, compare final predictions."""
+    X, margin, params, row_orders = _train_setup()
+    y = (margin > 0).astype(np.float64) if loss == "logistic" else margin
+    kwargs = dict(
+        loss=loss, optimizer=optimizer, learning_rate=0.1,
+        l2_linear=1e-4, l2_factors=1e-4, row_orders=row_orders, batch_size=batch_size,
+    )
+    if optimizer == "ftrl":
+        kwargs.update(l1_linear=0.01, l1_factors=0.001)
+    w0_c, w_c, V_c = _backend.fm_fit(X, y, params, **kwargs)
+    w0_g, w_g, V_g = _backend.fm_fit(X, y, params, backend="cuda", **kwargs)
+    pred_c = _backend.fm_predict_fast(X, w0_c, w_c, V_c)
+    pred_g = _backend.fm_predict_fast(X, w0_g, w_g, V_g)
+    np.testing.assert_allclose(pred_g, pred_c, rtol=TRAIN_RTOL, atol=TRAIN_ATOL)
+
+
+def test_fm_train_sample_weight_parity():
+    X, margin, params, row_orders = _train_setup(seed=1)
+    y = (margin > 0).astype(np.float64)
+    sw = np.random.default_rng(1).uniform(0.5, 2.0, size=len(y))
+    kwargs = dict(
+        loss="logistic", optimizer="adagrad", learning_rate=0.1,
+        l2_linear=1e-4, l2_factors=1e-4, row_orders=row_orders, batch_size=8,
+        sample_weight=sw,
+    )
+    w0_c, w_c, V_c = _backend.fm_fit(X, y, params, **kwargs)
+    w0_g, w_g, V_g = _backend.fm_fit(X, y, params, backend="cuda", **kwargs)
+    np.testing.assert_allclose(
+        _backend.fm_predict_fast(X, w0_g, w_g, V_g),
+        _backend.fm_predict_fast(X, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_fm_ftrl_l1_yields_exact_zeros_on_cuda():
+    """The FTRL flush stays on the CPU, so L1's exact zeros survive the CUDA
+    accumulation path."""
+    X, margin, params, row_orders = _train_setup(seed=2, epochs=5)
+    y = (margin > 0).astype(np.float64)
+    _w0, w, _V = _backend.fm_fit(
+        X, y, params, loss="logistic", optimizer="ftrl", learning_rate=0.5,
+        l2_linear=0.0, l2_factors=0.0, l1_linear=0.5, l1_factors=0.1,
+        row_orders=row_orders, batch_size=4, backend="cuda",
+    )
+    assert np.sum(w == 0.0) > 0
+
+
+@pytest.mark.parametrize("cls", [FMClassifier, FMRegressor])
+def test_fm_estimator_fit_cuda_end_to_end(cls):
+    """FMClassifier/FMRegressor fit entirely with backend='cuda' vs an
+    identically-seeded CPU twin (float64 attrs to avoid casting noise)."""
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 200, 20, density=0.3)
+    margin = X @ rng.normal(size=20)
+    y = (margin > 0).astype(int) if cls is FMClassifier else margin
+    common = dict(n_factors=4, max_iter=5, random_state=0, dtype="float64", batch_size=16)
+    cpu = cls(**common).fit(X, y)
+    gpu = cls(backend="cuda", **common).fit(X, y)
+    score = "decision_function" if cls is FMClassifier else "predict"
+    np.testing.assert_allclose(
+        getattr(gpu, score)(X), getattr(cpu, score)(X), rtol=1e-6, atol=1e-6
+    )
+
+
+def test_fm_early_stopping_fit_cuda():
+    """ES drives the CUDA kernel epoch-by-epoch through the same CPU-side
+    optimizer-state hand-off; with patience >= max_iter both backends run all
+    epochs, so the trajectories match up to atomic-order noise."""
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 300, 20, density=0.3)
+    y = (X @ rng.normal(size=20) > 0).astype(int)
+    common = dict(
+        n_factors=4, max_iter=6, random_state=0, dtype="float64",
+        early_stopping=True, patience=6, batch_size=32,
+    )
+    cpu = FMClassifier(**common).fit(X, y)
+    gpu = FMClassifier(backend="cuda", **common).fit(X, y)
+    assert gpu.n_iter_ == cpu.n_iter_
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+
+
+def test_fm_partial_fit_cuda():
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 200, 20, density=0.3)
+    y = (X @ rng.normal(size=20) > 0).astype(int)
+    common = dict(n_factors=4, max_iter=2, random_state=0, dtype="float64")
+    cpu = FMClassifier(**common)
+    gpu = FMClassifier(backend="cuda", **common)
+    for m in (cpu, gpu):
+        m.partial_fit(X[:100], y[:100], classes=[0, 1])
+        m.partial_fit(X[100:], y[100:])
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
 
 
 def test_repeated_calls_reuse_cached_context():

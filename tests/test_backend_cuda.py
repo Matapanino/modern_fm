@@ -2,6 +2,7 @@
 accepted with clear errors, never a silent CPU fallback. Kernel parity tests
 live separately and skip without a GPU; these run everywhere."""
 
+import numpy as np
 import pytest
 from modern_fm import (
     FFMClassifier,
@@ -29,19 +30,43 @@ def test_import_never_requires_cuda():
     _backend.has_cuda()
 
 
-@pytest.mark.parametrize(
-    "cls", [FMClassifier, FMRegressor, FFMClassifier, FFMRegressor, FwFMClassifier]
-)
-def test_backend_cuda_errors_clearly(rng, cls):
+@pytest.mark.parametrize("cls", [FMClassifier, FMRegressor])
+def test_fm_fit_cuda_supported(rng, cls):
+    """FM binary/regression training accumulates on CUDA (gpu_backend_plan
+    milestone 3); without CUDA the error stays clear, never a CPU fallback."""
+    X, y = _xy(rng)
+    model = cls(backend="cuda", max_iter=2)
+    if _backend.has_cuda():
+        model.fit(X, y)
+        assert model.predict(X).shape == (X.shape[0],)
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            model.fit(X, y)
+
+
+@pytest.mark.parametrize("cls", [FFMClassifier, FFMRegressor, FwFMClassifier])
+def test_fit_cuda_unsupported_models_error_clearly(rng, cls):
     X, y = _xy(rng)
     model = cls(backend="cuda", max_iter=2)
     if _backend.has_cuda():
         # CUDA present: fitting names the exact unsupported surface
-        with pytest.raises(NotImplementedError, match="FM/FFM prediction only"):
+        with pytest.raises(NotImplementedError, match="FM binary/regression training"):
             model.fit(X, y)
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
             model.fit(X, y)
+
+
+def test_fm_multiclass_fit_cuda_not_implemented(rng):
+    X, _ = _xy(rng, n=30)
+    y3 = np.arange(30) % 3
+    model = FMClassifier(backend="cuda", max_iter=2)
+    if _backend.has_cuda():
+        with pytest.raises(NotImplementedError, match="multiclass FM training"):
+            model.fit(X, y3)
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            model.fit(X, y3)
 
 
 def test_fm_predict_cuda_requires_cuda(rng):
@@ -77,7 +102,7 @@ def test_fwfm_predict_cuda_not_implemented(rng):
     X, y = _xy(rng)
     m = FwFMClassifier(max_iter=3, random_state=0).fit(X, y)
     m.set_params(backend="cuda")
-    with pytest.raises(NotImplementedError, match="FM/FFM prediction only"):
+    with pytest.raises(NotImplementedError, match="FwFM prediction"):
         m.decision_function(X)
 
 
@@ -99,7 +124,28 @@ def test_error_at_fit_not_init():
     FMClassifier(backend="bogus")
 
 
-def test_partial_fit_validates_backend_too(rng):
+def test_partial_fit_backend_cuda(rng):
+    """Binary FM partial_fit rides the same CUDA kernel as fit (state stays on
+    the CPU); without CUDA it errors clearly."""
     X, y = _xy(rng)
-    with pytest.raises((RuntimeError, NotImplementedError)):
-        FMClassifier(backend="cuda").partial_fit(X, y, classes=[0, 1])
+    m = FMClassifier(backend="cuda", max_iter=2)
+    if _backend.has_cuda():
+        m.partial_fit(X, y, classes=[0, 1])
+        assert m.predict(X).shape == (X.shape[0],)
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            m.partial_fit(X, y, classes=[0, 1])
+
+
+def test_partial_fit_cuda_unsupported_cells(rng):
+    X, y = _xy(rng, n=30)
+    ffm = FFMClassifier(backend="cuda", max_iter=2)
+    fm3 = FMClassifier(backend="cuda", max_iter=2)
+    if _backend.has_cuda():
+        with pytest.raises(NotImplementedError, match="FM binary/regression training"):
+            ffm.partial_fit(X, y, classes=[0, 1])
+        with pytest.raises(NotImplementedError, match="multiclass FM training"):
+            fm3.partial_fit(X, np.arange(30) % 3, classes=[0, 1, 2])
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            ffm.partial_fit(X, y, classes=[0, 1])

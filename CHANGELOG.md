@@ -6,6 +6,21 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **CUDA FM training accumulation** (docs/gpu_backend_plan.md milestone 3):
+  `FMClassifier` (binary) and `FMRegressor` now accept `backend="cuda"` at
+  fit — each mini-batch's data-gradient is accumulated on the GPU
+  (`rust/src/cuda/fm_train.rs`; CSR/targets/row-order upload once per call,
+  w/V re-upload and dense gradients download per batch) while the optimizer
+  flush and **all** optimizer state stay on the CPU, so SGD/AdaGrad/Adam/FTRL,
+  early stopping, `partial_fit` and `warm_start` ride through unchanged
+  (FTRL's exact L1 zeros included). Multiclass FM, FFM and FwFM training
+  still raise `NotImplementedError`; there is never a silent fallback.
+  Caveats: CUDA training is **nondeterministic run-to-run** (atomic gradient
+  accumulation; the CPU backend keeps exact seeded reproducibility) and the
+  CUDA backend now requires compute capability >= 6.0 (Pascal, 2016 — the
+  shared module is compiled for `compute_60` because
+  `atomicAdd(double*, double)` needs it). Parity is tolerance-based on final
+  predictions (rtol 1e-7 / atol 1e-8, `tests/test_cuda_parity.py`).
 - **CUDA FFM prediction** (docs/gpu_backend_plan.md milestone 2): an NVRTC
   kernel for FFM CSR prediction (`rust/src/cuda/ffm.rs`, one block per row,
   256 threads striding the O(z²) pair loop, no row-nnz or k limit). Usage
@@ -21,9 +36,11 @@ All notable changes to `modern_fm` are documented here. This project adheres to
   initialization; calls stay transfer-inclusive (device-resident parameters
   are a later milestone). `benchmarks/bench_cuda.py` gained the FFM grid and
   a cold-start line separating first-call cost from steady-state timings.
-  First recorded T4 numbers (`benchmarks/README.md`): transfer-inclusive
-  speedups of 2.3–5.2x (FM) and 2.0–12.1x (FFM, serial CPU baseline) at
-  100k rows, with the one-time init at ~315 ms.
+  First recorded T4 numbers (`benchmarks/README.md`, full grid):
+  transfer-inclusive prediction speedups of 1.4–14.1x (FM) and 1.9–14.5x
+  (FFM, serial CPU baseline), one-time init ~0.4 s; FM training (1 epoch,
+  100k×100k, nnz 32, k 8) 0.3x at batch 256 → 3.1x at full batch — per-batch
+  parameter round-trips dominate small batches, as documented.
 
 ## [0.5.0] - 2026-07-02
 

@@ -157,8 +157,17 @@ groundwork (kernels land separately, gated on real-GPU validation — see
   process-wide cache of the CUDA context + NVRTC module
   (`rust/src/cuda/mod.rs`) so only the first call pays initialization.
   Parity rtol/atol 1e-10, T4-validated per `docs/cuda_validation_runbook.md`;
-  `bench_cuda.py` gained the FFM grid + a cold-start line. Training,
-  FwFM-CUDA and device-resident parameters remain out of scope.
+  `bench_cuda.py` gained the FFM grid + a cold-start line. FwFM-CUDA and
+  device-resident parameters remain out of scope.
+- [x] **CUDA FM training accumulation** (gpu_backend_plan milestone 3):
+  binary/regression FM fit with `backend="cuda"` — GPU accumulates each
+  mini-batch's data-gradient (dense buffers, `atomicAdd`, CSR uploaded once
+  per call), the untouched CPU flush applies SGD/AdaGrad/Adam/FTRL, so early
+  stopping, `partial_fit`, `warm_start` and FTRL's exact L1 zeros work
+  unchanged. Multiclass/FFM/FwFM training still raise. Nondeterministic
+  run-to-run (atomics); parity on final predictions at rtol 1e-7/atol 1e-8;
+  requires compute >= 6.0. Sparse gradient buffers + device-resident params
+  are the follow-up before claiming training speed.
 
 ## v1.0 — stable release
 
