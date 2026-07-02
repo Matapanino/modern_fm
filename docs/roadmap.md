@@ -199,10 +199,17 @@ freeze. Shipping this milestone = tagging v1.0.0.
     dominant-pair tests + blockwise-vs-naive parity
     (`tests/test_top_interactions.py`); `examples/top_interactions.py` +
     api_design section.
-- [ ] **Real-data benchmark** — Criteo/Avazu *sample* (not full). _Priority: P1._
-  - DoD: `benchmarks/bench_criteo_like.py` reporting test AUC + fit time on a
-    small vendored/downloaded sample; README results table; fixed seeds + machine
-    specs (benchmark_plan rules); no tuning-to-benchmark.
+- [x] **Real-data benchmark** — real CTR sample. _Priority: P1._
+  - DoD met with a substitution, documented in the script: the Criteo/Avazu
+    samples are no longer publicly downloadable without credentials (checked
+    2026-07: labs.criteo.com redirects, the S3 mirror 404s, the HF copy is
+    gated), so `benchmarks/bench_criteo_like.py` uses the real KDD Cup 2012
+    track-2 CTR sample from OpenML (`Click_prediction_small`, zero-credential
+    `fetch_openml`). 200k rows / 373k one-hot features / 9 fields, fixed seed,
+    stratified split, libFM-style fixed hyperparameters + built-in early
+    stopping (no tuning-to-benchmark); README table with AUC + fit time +
+    machine specs (honest result: factor models match, not beat, LR on this
+    singleton-heavy sample; FwFM closest at 0.6891 vs LR 0.6908).
 - [ ] **Documentation site** — published API/usage docs. _Priority: P1._
   - DoD: mkdocs-material (recommended) or Sphinx — install, quickstart, API
     reference, math specs, examples; GitHub Pages auto-deploy via CI; linked from

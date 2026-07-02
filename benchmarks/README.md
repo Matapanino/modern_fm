@@ -10,6 +10,9 @@
   (plus a cold-start line for the process-cached context/NVRTC module). Needs
   a `cuda-backend` build + GPU; run via `scripts/colab_gpu_test.sh` per
   `docs/cuda_validation_runbook.md`.
+- `bench_criteo_like.py` — real CTR data (KDD Cup 2012 sample via OpenML,
+  no credentials needed): test AUC + fit time vs `LogisticRegression`;
+  results table in the top-level README.
 
 ```bash
 .venv/bin/python benchmarks/bench_synthetic.py
