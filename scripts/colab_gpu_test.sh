@@ -59,9 +59,17 @@ trap 'cleanup_local; stop_vm' EXIT
 echo ">> uploading working tree"
 colab upload -s "$SESSION" "$TARBALL" /content/modern_fm.tar.gz
 
+# `colab exec` does not forward the local environment to the remote kernel, so
+# the full-bench flag travels as a file (always uploaded — no stale state on
+# --keep'd VMs).
+FLAGFILE="$(mktemp -t modernfm-flag-XXXXXX)"
+printf '%s' "$FULL_BENCH" > "$FLAGFILE"
+colab upload -s "$SESSION" "$FLAGFILE" /content/modernfm_full_bench
+rm -f "$FLAGFILE"
+
 echo ">> building + validating on the GPU (rust build takes a few minutes)"
 # 7200s: the full FM grid (1M-row cells) plus the FFM grid can exceed 3600s.
-MODERNFM_FULL_BENCH="$FULL_BENCH" colab exec -s "$SESSION" --timeout 7200 -f scripts/colab_remote_test.py
+colab exec -s "$SESSION" --timeout 7200 -f scripts/colab_remote_test.py
 
 echo ">> downloading report -> $REPORT_OUT"
 colab download -s "$SESSION" /content/modernfm_gpu_report.md "$REPORT_OUT"

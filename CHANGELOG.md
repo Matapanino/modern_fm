@@ -21,6 +21,9 @@ All notable changes to `modern_fm` are documented here. This project adheres to
   initialization; calls stay transfer-inclusive (device-resident parameters
   are a later milestone). `benchmarks/bench_cuda.py` gained the FFM grid and
   a cold-start line separating first-call cost from steady-state timings.
+  First recorded T4 numbers (`benchmarks/README.md`): transfer-inclusive
+  speedups of 2.3–5.2x (FM) and 2.0–12.1x (FFM, serial CPU baseline) at
+  100k rows, with the one-time init at ~315 ms.
 
 ## [0.5.0] - 2026-07-02
 

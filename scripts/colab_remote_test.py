@@ -10,8 +10,8 @@ GPU kernel. It expects the committed tree at ``/content/modern_fm.tar.gz``
      (``MATURIN_PEP517_ARGS``; cudarc dlopens the driver, no toolkit needed),
   4. asserts ``_backend.has_cuda()``,
   5. runs ``tests/test_cuda_parity.py`` (must pass, not skip) and the full
-     suite, then ``benchmarks/bench_cuda.py`` (``--quick`` unless
-     ``MODERNFM_FULL_BENCH=1``),
+     suite, then ``benchmarks/bench_cuda.py`` (``--quick`` unless the
+     uploaded ``/content/modernfm_full_bench`` flag file says ``1``),
   6. writes everything to ``/content/modernfm_gpu_report.md`` — the report the
      runbook asks to paste into the CUDA PR.
 """
@@ -85,7 +85,13 @@ sections.append(("tests/test_cuda_parity.py (must pass, not skip)", parity))
 full = sh([sys.executable, "-m", "pytest", "-q"])
 sections.append(("full pytest -q", full[-1500:]))
 
-bench_args = [] if os.environ.get("MODERNFM_FULL_BENCH") == "1" else ["--quick"]
+# The flag arrives as a file (colab exec does not forward the local env).
+try:
+    with open("/content/modernfm_full_bench") as f:
+        full_bench = f.read().strip() == "1"
+except OSError:
+    full_bench = os.environ.get("MODERNFM_FULL_BENCH") == "1"
+bench_args = [] if full_bench else ["--quick"]
 bench = sh([sys.executable, "benchmarks/bench_cuda.py", *bench_args])
 sections.append((f"bench_cuda.py {' '.join(bench_args)} (transfer-inclusive)", bench))
 
