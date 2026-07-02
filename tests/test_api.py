@@ -111,3 +111,14 @@ def test_ffm_multiclass_fits():
     model = FFMClassifier(max_iter=5).fit(X, y, field_ids=np.zeros(X.shape[1], dtype=int))
     assert model.V_.shape[0] == 3  # one FFM per class
     np.testing.assert_array_equal(model.classes_, np.array([0, 1, 2]))
+
+
+def test_version_matches_installed_metadata():
+    """__version__ (frozen public API) must track the distribution version —
+    v1.1.0 shipped self-reporting "1.0.0" because the hardcoded string was
+    missed in the release bump; this pins the two together."""
+    import importlib.metadata
+
+    import modern_fm
+
+    assert modern_fm.__version__ == importlib.metadata.version("modern-fm")
