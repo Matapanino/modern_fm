@@ -63,3 +63,27 @@ def test_load_model_wrong_class_raises(tmp_path):
 def test_save_model_requires_fitted(tmp_path):
     with pytest.raises(NotFittedError):
         FMClassifier().save_model(str(tmp_path / "m.bin"))
+
+
+def test_load_model_rejects_newer_format(tmp_path):
+    """docs/compat_policy.md: files from a newer modern_fm fail with a clear
+    upgrade error instead of loading garbage."""
+    model, _ = _fit(FMClassifier)
+    path = str(tmp_path / "m.bin")
+    model.save_model(path)
+    with open(path, "rb") as f:
+        state = pickle.load(f)
+    state["format_version"] = 999
+    with open(path, "wb") as f:
+        pickle.dump(state, f)
+    with pytest.raises(ValueError, match="newer modern_fm"):
+        FMClassifier.load_model(path)
+
+
+def test_save_model_carries_format_version(tmp_path):
+    model, _ = _fit(FMClassifier)
+    path = str(tmp_path / "m.bin")
+    model.save_model(path)
+    with open(path, "rb") as f:
+        state = pickle.load(f)
+    assert state["format_version"] == 1

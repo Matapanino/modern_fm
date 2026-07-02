@@ -218,12 +218,17 @@ freeze. Shipping this milestone = tagging v1.0.0.
     branch) on pushes to main touching docs; README links the site
     (https://matapanino.github.io/modern_fm/). One-time repo setting after
     the first deploy: Pages -> deploy from branch `gh-pages`.
-- [ ] **API freeze + backward-compat policy** — _Priority: P0._
-  - DoD: audit public `__all__` (estimators, encoder, libffm I/O, errors); every
-    public estimator + constructor param documented in `docs/api_design.md`;
-    write a SemVer / backward-compatibility policy (`docs/compat_policy.md`);
-    `save_model` format carries a version tag and stays forward-readable; no
-    undocumented `NotImplementedError` in the public surface.
+- [x] **API freeze + backward-compat policy** — _Priority: P0._
+  - DoD met: `__all__` audited (5 estimators + pooling + encoder +
+    `NotFittedError` + libffm I/O + `__version__`); every public constructor
+    param verified present in `docs/api_design.md` by an inspect-based sweep
+    (`CategoricalEncoder`/libffm section added — the one gap); SemVer +
+    backward-compat policy written (`docs/compat_policy.md`, in the docs-site
+    nav); `save_model` carries `format_version` and `load_model` now rejects
+    newer-format files with a clear upgrade error (tested); the one stale
+    `NotImplementedError` (dead `_check_binary_classes` claiming multiclass
+    is unsupported) removed — the remaining `NotImplementedError` surface is
+    exactly the documented CUDA cell guards.
 - [ ] **Release 1.0.0** — _Priority: P0._
   - DoD: bump version to `1.0.0` (`__init__.py`, `pyproject.toml`, `Cargo.toml`);
     CHANGELOG `1.0.0` entry; full CI matrix green (3 OS × py3.10–3.13 + cargo

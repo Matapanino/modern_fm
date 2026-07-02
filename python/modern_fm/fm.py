@@ -41,9 +41,6 @@ from ._reference_train import (
 )
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
 
-_PHASE4 = "lands in a later phase (see docs/roadmap.md)"
-
-
 _CUDA_SCOPE = "backend='cuda' supports FM/FFM prediction and FM/FFM binary/regression training"
 
 
@@ -119,21 +116,6 @@ def _validate_X(estimator, X, *, reset):
     if not np.all(np.isfinite(data)):
         raise ValueError("X contains NaN or infinity, which modern_fm does not accept")
     return X
-
-
-def _check_binary_classes(y):
-    """Return (classes_, y01 float64) for a binary target."""
-    classes = np.unique(y)
-    if classes.shape[0] < 2:
-        raise ValueError(
-            "Classifier can't train when only one class is present in y; "
-            "need at least 2 classes."
-        )
-    if classes.shape[0] > 2:
-        raise NotImplementedError(
-            f"multiclass classification (got {classes.shape[0]} classes) {_PHASE4}"
-        )
-    return classes, (y == classes[1]).astype(np.float64)
 
 
 def _check_sample_weight(sample_weight, n_rows):

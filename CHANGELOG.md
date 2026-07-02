@@ -6,6 +6,14 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **API freeze + backward-compatibility policy (v1.0 roadmap item)**:
+  `docs/compat_policy.md` (SemVer contract: what is public, deprecation
+  rules, numerical-reproducibility guarantees, dependency policy; in the
+  docs-site nav). `load_model` now rejects files written by a newer
+  modern_fm (`format_version` check) with a clear upgrade error;
+  `CategoricalEncoder`/libffm I/O documented in api_design (the one gap an
+  inspect-based parameter sweep found); a stale dead-code
+  `NotImplementedError` claiming multiclass FM is unsupported was removed.
 - **Documentation site (v1.0 roadmap item)**: mkdocs-material site over the
   existing design docs plus a new install/quickstart landing page
   (`docs/index.md`), auto-deployed to GitHub Pages by

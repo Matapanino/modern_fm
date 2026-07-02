@@ -144,6 +144,25 @@ pipe = make_pipeline(
   `model.bi_interaction(X)` (deliberately **not** named `transform`, so plain
   FMs keep plain-estimator semantics in sklearn tooling).
 
+## CategoricalEncoder & libffm I/O
+
+```python
+enc = CategoricalEncoder(handle_unknown="ignore")  # or "error"
+X_csr = enc.fit_transform(X_int_columns)   # one-hot CSR (float64)
+enc.field_ids_                             # (n_features_out_,) source column of each output column
+enc.categories_, enc.n_features_out_, enc.n_fields_
+```
+
+One-hot encodes integer categorical columns to CSR while tracking the field
+of every output column — the natural `field_ids` source for FFM/FwFM. At
+`transform`, categories unseen during `fit` either contribute no active
+column (`handle_unknown="ignore"`, the default) or raise (`"error"`).
+
+```python
+X, y, field_ids = load_libffm(path)        # libffm text -> (CSR, y, field_ids)
+dump_libffm(path, X, y, field_ids)         # round-trips
+```
+
 ## Partial fit / warm start (incremental & streaming training)
 
 All five estimators support incremental training:
