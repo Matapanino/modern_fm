@@ -104,19 +104,24 @@ pub fn predict_csr(
 /// over touched features (FM-shaped) plus `gr` over touched upper-triangle
 /// field pairs. Backing arrays stay zero between batches (`flush` clears
 /// exactly the touched entries).
-struct FwfmGradAccum {
-    g_w0: f64,
-    gw: Vec<f64>,             // n_features
-    gv: Vec<f64>,             // n_features * k
-    gr: Vec<f64>,             // n_fields * n_fields (upper triangle used)
-    touched: Vec<usize>,      // features touched this batch
-    seen: Vec<bool>,          // n_features
-    touched_pair: Vec<usize>, // pair slots (pa * n_fields + pb, pa <= pb)
-    seen_pair: Vec<bool>,     // n_fields * n_fields
+///
+/// `pub(crate)` (fields included) so the CUDA training path can load a
+/// device-accumulated batch into the same buffers and reuse `flush` — the
+/// optimizer semantics live in exactly one place (like `FmGradAccum` /
+/// `FfmGradAccum`).
+pub(crate) struct FwfmGradAccum {
+    pub(crate) g_w0: f64,
+    pub(crate) gw: Vec<f64>,             // n_features
+    pub(crate) gv: Vec<f64>,             // n_features * k
+    pub(crate) gr: Vec<f64>,             // n_fields * n_fields (upper triangle used)
+    pub(crate) touched: Vec<usize>,      // features touched this batch
+    pub(crate) seen: Vec<bool>,          // n_features
+    pub(crate) touched_pair: Vec<usize>, // pair slots (pa * n_fields + pb, pa <= pb)
+    pub(crate) seen_pair: Vec<bool>,     // n_fields * n_fields
 }
 
 impl FwfmGradAccum {
-    fn new(n_features: usize, n_fields: usize, k: usize) -> Self {
+    pub(crate) fn new(n_features: usize, n_fields: usize, k: usize) -> Self {
         Self {
             g_w0: 0.0,
             gw: vec![0.0; n_features],
@@ -180,7 +185,7 @@ impl FwfmGradAccum {
     /// Apply one update per touched coordinate (w0, then w + V per touched
     /// feature, then R per touched pair), clearing the touched entries.
     #[allow(clippy::too_many_arguments)]
-    fn flush(
+    pub(crate) fn flush(
         &mut self,
         bsz: f64,
         w0: &mut f64,

@@ -45,16 +45,29 @@ def test_fit_cuda_supported(rng, cls):
             model.fit(X, y)
 
 
-def test_fwfm_fit_cuda_not_implemented(rng):
+def test_fwfm_fit_cuda_supported(rng):
+    """FwFM binary training accumulates on CUDA (gpu_backend_plan milestone
+    6); without CUDA the error stays clear, never a CPU fallback."""
     X, y = _xy(rng)
     model = FwFMClassifier(backend="cuda", max_iter=2)
     if _backend.has_cuda():
-        # CUDA present: fitting names the exact unsupported surface
-        with pytest.raises(NotImplementedError, match="FwFM training"):
-            model.fit(X, y)
+        model.fit(X, y)
+        assert model.predict(X).shape == (X.shape[0],)
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
             model.fit(X, y)
+
+
+def test_fwfm_multiclass_fit_cuda_supported(rng):
+    X, _ = _xy(rng, n=30)
+    y3 = np.arange(30) % 3
+    model = FwFMClassifier(backend="cuda", max_iter=2)
+    if _backend.has_cuda():
+        model.fit(X, y3)
+        assert model.predict_proba(X).shape == (X.shape[0], 3)
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            model.fit(X, y3)
 
 
 @pytest.mark.parametrize("cls", [FMClassifier, FFMClassifier])
@@ -103,12 +116,18 @@ def test_ffm_predict_cuda_requires_cuda(rng, cls):
             score(X)
 
 
-def test_fwfm_predict_cuda_not_implemented(rng):
+def test_fwfm_predict_cuda_requires_cuda(rng):
+    """FwFM prediction has a CUDA kernel (gpu_backend_plan milestone 6); like
+    FM/FFM, it never falls back to CPU silently."""
     X, y = _xy(rng)
     m = FwFMClassifier(max_iter=3, random_state=0).fit(X, y)
     m.set_params(backend="cuda")
-    with pytest.raises(NotImplementedError, match="FwFM prediction"):
-        m.decision_function(X)
+    if _backend.has_cuda():
+        p = m.decision_function(X)
+        assert p.shape == (X.shape[0],)
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            m.decision_function(X)
 
 
 def test_backend_bogus_still_valueerror(rng):
@@ -158,12 +177,15 @@ def test_partial_fit_multiclass_backend_cuda(rng, cls):
             m.partial_fit(X, y3, classes=[0, 1, 2])
 
 
-def test_partial_fit_cuda_unsupported_cells(rng):
+def test_fwfm_partial_fit_backend_cuda(rng):
+    """FwFM partial_fit rides the same CUDA kernel as fit; without CUDA it
+    errors clearly. With this cell, every prediction and training cell is
+    CUDA-covered."""
     X, y = _xy(rng, n=30)
     fwfm = FwFMClassifier(backend="cuda", max_iter=2)
     if _backend.has_cuda():
-        with pytest.raises(NotImplementedError, match="FwFM training"):
-            fwfm.partial_fit(X, y, classes=[0, 1])
+        fwfm.partial_fit(X, y, classes=[0, 1])
+        assert fwfm.predict(X).shape == (X.shape[0],)
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
             fwfm.partial_fit(X, y, classes=[0, 1])
