@@ -97,17 +97,20 @@ FFM prediction (Rust CPU vs CUDA, transfer-inclusive; CPU FFM is serial)
 
 FM training, 1 epoch (Rust CPU n_jobs=1 vs CUDA accumulation + CPU flush; rows=100000, nnz/row=32, k=8)
      batch     cpu ms    cuda ms  speedup
-       256      741.5     2256.5     0.3x
-      1024      707.3     1108.5     0.6x
-      8192      439.9      461.6     1.0x
-      full      352.9      112.3     3.1x
+       256      813.2      829.1     1.0x
+      1024      575.2      755.2     0.8x
+      8192      342.9      586.0     0.6x
+      full      183.8      135.8     1.4x
 ```
 
-Training honesty note: the CUDA column re-uploads `w`/`V` and downloads dense
-gradients every mini-batch, so small batches lose to the CPU; the win appears
-at large/full batches. Sparse touched-coordinate gradient buffers and
-device-resident parameters (gpu_backend_plan.md) are the follow-ups before
-claiming general training speedups.
+Training notes (honesty): the training table is from a later same-day run
+with device-resident parameters + compact touched-coordinate transfers for
+small batches; that cut the CUDA time at batch 256 from 2256 ms (dense
+transfers, previous run) to 829 ms — small batches went from a heavy loss to
+break-even, now bounded by kernel-launch overhead and low occupancy rather
+than transfers. Colab T4 *instances vary a lot* (the CPU column moved up to
+~2x between same-day runs), so only same-run columns are comparable. The win
+remains largest at full batch.
 
 See `docs/benchmark_plan.md` for goals and rules (fixed seeds, report machine
 specs, do not tune the library to a benchmark).
