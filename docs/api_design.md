@@ -176,6 +176,27 @@ persisted optimizer state) instead of re-initializing, then run `max_iter` more 
 resuming after `load_model` restarts the optimizer accumulators from the loaded
 parameters.
 
+## Probability calibration
+
+Calibrated `predict_proba` is the standard scikit-learn recipe — the
+classifiers are `check_estimator`-clean, so `CalibratedClassifierCV` works
+directly and there is deliberately no library-specific calibration API:
+
+```python
+from sklearn.calibration import CalibratedClassifierCV
+
+cal = CalibratedClassifierCV(FMClassifier(...), method="sigmoid", cv=3)
+cal.fit(X, y)
+cal.predict_proba(X_new)
+```
+
+- `method="sigmoid"` (Platt) suits systematic distortions (e.g. training with
+  `label_smoothing` compresses probabilities toward 0.5); `"isotonic"` needs
+  more data but fixes arbitrary monotone miscalibration.
+- Tested for every public classifier (`tests/test_calibration.py`, including
+  an ECE/Brier-improvement pin on synthetically miscalibrated data); see
+  `examples/calibration.py` for a reliability-table walkthrough.
+
 ## Learned attributes (after fit)
 
 - `w0_` (float), `w_` (n_features,), `V_`

@@ -6,6 +6,13 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **Probability calibration (v1.0 roadmap item)** via the recommended sklearn
+  path: every public classifier works inside `CalibratedClassifierCV`
+  (pinned by `tests/test_calibration.py`, including an ECE/Brier-improvement
+  test on synthetically miscalibrated data); `examples/calibration.py` and an
+  api_design "Probability calibration" section document the recipe. No
+  library-specific calibration API — the estimators are sklearn-clean by
+  design.
 - **CUDA FFM training accumulation** (docs/gpu_backend_plan.md milestone 4):
   `FFMClassifier` (binary) and `FFMRegressor` now accept `backend="cuda"` at
   fit (`rust/src/cuda/ffm_train.rs`). V stays device-resident; per batch the
