@@ -3,7 +3,16 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] - 2026-07-02
+
+First stable release. The public API is now frozen under the SemVer contract
+in `docs/compat_policy.md`; every criterion of the roadmap's "v1.0 —
+criteria" gate is met. Highlights of this release beyond v0.5.0: the CUDA
+backend covers FM/FFM prediction **and** FM/FFM binary/regression training
+(T4-validated, honest benchmarks recorded); calibrated probabilities and
+`top_interactions` model inspection ship as production-CTR features; a real
+click-data benchmark and the documentation site
+(https://matapanino.github.io/modern_fm/) are live.
 
 ### Added
 - **API freeze + backward-compatibility policy (v1.0 roadmap item)**:

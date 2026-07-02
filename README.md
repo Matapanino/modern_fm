@@ -12,19 +12,24 @@ Factorization Machines (FFM) for Python.
 **Documentation: <https://matapanino.github.io/modern_fm/>** — install,
 quickstart, API reference, math specs.
 
-**Status: v0.3 (Beta).** A Rust CPU backend (parity-tested against pure-NumPy
-reference implementations) drives sklearn-style estimators — `FMClassifier`
-(binary + multiclass softmax), `FMRegressor`, and `FFMClassifier`
-(binary + multiclass softmax) — with the SGD / AdaGrad / Adam /
-**FTRL-Proximal** optimizers, **mini-batch**
+**Status: v1.0 (stable).** The public API is frozen under the SemVer contract
+in `docs/compat_policy.md`. A Rust CPU backend (parity-tested against
+pure-NumPy reference implementations) drives sklearn-style estimators —
+`FMClassifier`, `FMRegressor`, `FFMClassifier`, `FFMRegressor` (binary +
+multiclass softmax + regression) and `FwFMClassifier` (Field-weighted FM) —
+with the SGD / AdaGrad / Adam / **FTRL-Proximal** optimizers, **mini-batch**
 gradient averaging (`batch_size`), **multi-core training** via `rayon`
-(`n_jobs`), plus `sample_weight`/`class_weight`, `label_smoothing`, early
-stopping, a `CategoricalEncoder`, and `save_model`/`load_model`. FTRL's L1
-(`l1_linear`/`l1_factors`) yields exact-zero weights. The estimators are
-scikit-learn `check_estimator`-compatible (drop into `Pipeline` / `GridSearchCV`),
-accept pandas / polars DataFrames, and `load_libffm` / `dump_libffm` read and write
-the libffm text format. See `docs/roadmap.md` for remaining niche gaps (FTRL +
-early stopping, multiclass + early-stopping for FFM).
+(`n_jobs`), early stopping for every cell, `partial_fit`/`warm_start`
+streaming, `sample_weight`/`class_weight`, `label_smoothing`, a
+`CategoricalEncoder`, `top_interactions` model inspection, and
+`save_model`/`load_model`. FTRL's L1 (`l1_linear`/`l1_factors`) yields
+exact-zero weights. The estimators are scikit-learn
+`check_estimator`-compatible (drop into `Pipeline` / `GridSearchCV` /
+`CalibratedClassifierCV`), accept pandas / polars DataFrames, and
+`load_libffm` / `dump_libffm` read and write the libffm text format. An
+optional CUDA backend (`backend="cuda"`, source-build feature) accelerates
+FM/FFM prediction and FM/FFM binary/regression training on NVIDIA GPUs
+(compute ≥ 6.0).
 
 ## Installation
 

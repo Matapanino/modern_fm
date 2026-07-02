@@ -229,10 +229,11 @@ freeze. Shipping this milestone = tagging v1.0.0.
     `NotImplementedError` (dead `_check_binary_classes` claiming multiclass
     is unsupported) removed — the remaining `NotImplementedError` surface is
     exactly the documented CUDA cell guards.
-- [ ] **Release 1.0.0** — _Priority: P0._
-  - DoD: bump version to `1.0.0` (`__init__.py`, `pyproject.toml`, `Cargo.toml`);
-    CHANGELOG `1.0.0` entry; full CI matrix green (3 OS × py3.10–3.13 + cargo
-    test/clippy); tag `v1.0.0` → trusted-publishing `release.yml`.
+- [x] **Release 1.0.0** — _Priority: P0._
+  - DoD met: version `1.0.0` in `__init__.py` / `pyproject.toml` /
+    `Cargo.toml` (+ `Cargo.lock`); CHANGELOG `1.0.0` entry (Unreleased
+    folded in); full CI matrix green on the release PR; tag `v1.0.0` →
+    trusted-publishing `release.yml` (wheels + sdist to PyPI).
 
 ## v1.0 — criteria
 
