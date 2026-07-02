@@ -23,7 +23,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.utils.multiclass import check_classification_targets, unique_labels
 from sklearn.utils.validation import check_consistent_length, column_or_1d
 
-from . import _backend
+from . import _backend, _inspect
 from ._base import ModelIOMixin, check_is_fitted
 from ._early_stop import normalize_eval_set, run_epochs, split_indices
 from ._partial import make_opt_state, partial_fit_classes, warm_resume
@@ -36,11 +36,13 @@ from ._reference_train import (
     new_ftrl_state,
 )
 from .fm import (
+    _check_n_top,
     _check_sample_weight,
     _check_X,
     _combine_weights,
     _fit_backend_guard,
     _resolve_n_jobs,
+    _select_class_slice,
     _smooth,
     _validate_backend,
     _validate_X,
@@ -61,6 +63,21 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
         tags = super().__sklearn_tags__()
         tags.input_tags.sparse = True
         return tags
+
+    def top_interactions(self, n_top=10, class_idx=None):
+        """The `n_top` strongest learned pairwise interactions.
+
+        Returns a list of ``(i, j, strength)`` tuples (feature indices,
+        ``i < j``) sorted by descending
+        ``strength = |<V[i, f_j], V[j, f_i]>|`` — the magnitude of the learned
+        pairwise coefficient of ``x_i x_j`` (docs/math_spec.md). Exact full
+        upper-triangle scan grouped by field pair, O(n_features² · n_factors).
+        Multiclass models require ``class_idx``.
+        """
+        check_is_fitted(self)
+        _check_n_top(n_top)
+        (V,) = _select_class_slice((self.V_,), self.V_.ndim == 4, class_idx, "FFM")
+        return _inspect.ffm_top_interactions(V, self.field_ids_, n_top)
 
     def _validate_common(self):
         if self.optimizer not in OPTIMIZERS:

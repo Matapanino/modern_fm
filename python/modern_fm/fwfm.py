@@ -22,7 +22,7 @@ from sklearn.base import ClassifierMixin
 from sklearn.utils.multiclass import check_classification_targets, unique_labels
 from sklearn.utils.validation import check_consistent_length, column_or_1d
 
-from . import _backend
+from . import _backend, _inspect
 from ._base import check_is_fitted
 from ._early_stop import normalize_eval_set, run_epochs, split_indices
 from ._partial import make_opt_state_fwfm, partial_fit_classes, warm_resume_fwfm
@@ -35,10 +35,12 @@ from ._reference_train import (
 )
 from .ffm import _FFMBase
 from .fm import (
+    _check_n_top,
     _check_X,
     _combine_weights,
     _fit_backend_guard,
     _predict_backend_guard,
+    _select_class_slice,
     _smooth,
     _validate_X,
 )
@@ -53,6 +55,22 @@ class _FwFMBase(_FFMBase):
     def _validate_common(self):
         super()._validate_common()
         _fit_backend_guard(self.backend, "FwFM training")
+
+    def top_interactions(self, n_top=10, class_idx=None):
+        """The `n_top` strongest learned pairwise interactions.
+
+        Returns a list of ``(i, j, strength)`` tuples (feature indices,
+        ``i < j``) sorted by descending
+        ``strength = |r[min(f_i, f_j), max(f_i, f_j)] * <V_i, V_j>|`` — the
+        magnitude of the learned pairwise coefficient of ``x_i x_j``
+        (docs/math_spec_fwfm.md). Multiclass models require ``class_idx``.
+        """
+        check_is_fitted(self)
+        _check_n_top(n_top)
+        V, r = _select_class_slice(
+            (self.V_, self.r_), self.V_.ndim == 3, class_idx, "FwFM"
+        )
+        return _inspect.fm_top_interactions(V, n_top, r=r, field_ids=self.field_ids_)
 
     def _store_fitted(self, w0, w, V, R, n_features, n_iter, multiclass):
         out_dtype = np.float32 if self.dtype == "float32" else np.float64

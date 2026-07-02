@@ -6,6 +6,12 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **`top_interactions(n_top, class_idx=None)` (v1.0 roadmap "Model
+  inspection")** on every estimator: the strongest learned pairwise
+  interactions as `(i, j, strength)` tuples — `|<V_i, V_j>|` for FM, the
+  r-weighted variant for FwFM, `|<V[i, f_j], V[j, f_i]>|` for FFM (exact
+  blockwise upper-triangle scan, `python/modern_fm/_inspect.py`). Planted
+  dominant-pair + blockwise-vs-naive tests; `examples/top_interactions.py`.
 - **Probability calibration (v1.0 roadmap item)** via the recommended sklearn
   path: every public classifier works inside `CalibratedClassifierCV`
   (pinned by `tests/test_calibration.py`, including an ECE/Brier-improvement
