@@ -4,9 +4,13 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/modern-fm.svg)](https://pypi.org/project/modern-fm/)
 [![CI](https://github.com/Matapanino/modern_fm/actions/workflows/ci.yml/badge.svg)](https://github.com/Matapanino/modern_fm/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+[![docs](https://img.shields.io/badge/docs-github.io-blue.svg)](https://matapanino.github.io/modern_fm/)
 
 Fast, sklearn-compatible Factorization Machines (FM) and Field-aware
 Factorization Machines (FFM) for Python.
+
+**Documentation: <https://matapanino.github.io/modern_fm/>** — install,
+quickstart, API reference, math specs.
 
 **Status: v0.3 (Beta).** A Rust CPU backend (parity-tested against pure-NumPy
 reference implementations) drives sklearn-style estimators — `FMClassifier`
