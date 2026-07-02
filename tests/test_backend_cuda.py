@@ -30,10 +30,11 @@ def test_import_never_requires_cuda():
     _backend.has_cuda()
 
 
-@pytest.mark.parametrize("cls", [FMClassifier, FMRegressor])
-def test_fm_fit_cuda_supported(rng, cls):
-    """FM binary/regression training accumulates on CUDA (gpu_backend_plan
-    milestone 3); without CUDA the error stays clear, never a CPU fallback."""
+@pytest.mark.parametrize("cls", [FMClassifier, FMRegressor, FFMClassifier, FFMRegressor])
+def test_fit_cuda_supported(rng, cls):
+    """FM and FFM binary/regression training accumulate on CUDA
+    (gpu_backend_plan milestones 3-4); without CUDA the error stays clear,
+    never a CPU fallback."""
     X, y = _xy(rng)
     model = cls(backend="cuda", max_iter=2)
     if _backend.has_cuda():
@@ -44,25 +45,28 @@ def test_fm_fit_cuda_supported(rng, cls):
             model.fit(X, y)
 
 
-@pytest.mark.parametrize("cls", [FFMClassifier, FFMRegressor, FwFMClassifier])
-def test_fit_cuda_unsupported_models_error_clearly(rng, cls):
+def test_fwfm_fit_cuda_not_implemented(rng):
     X, y = _xy(rng)
-    model = cls(backend="cuda", max_iter=2)
+    model = FwFMClassifier(backend="cuda", max_iter=2)
     if _backend.has_cuda():
         # CUDA present: fitting names the exact unsupported surface
-        with pytest.raises(NotImplementedError, match="FM binary/regression training"):
+        with pytest.raises(NotImplementedError, match="FwFM training"):
             model.fit(X, y)
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
             model.fit(X, y)
 
 
-def test_fm_multiclass_fit_cuda_not_implemented(rng):
+@pytest.mark.parametrize(
+    "cls,cell",
+    [(FMClassifier, "multiclass FM training"), (FFMClassifier, "multiclass FFM training")],
+)
+def test_multiclass_fit_cuda_not_implemented(rng, cls, cell):
     X, _ = _xy(rng, n=30)
     y3 = np.arange(30) % 3
-    model = FMClassifier(backend="cuda", max_iter=2)
+    model = cls(backend="cuda", max_iter=2)
     if _backend.has_cuda():
-        with pytest.raises(NotImplementedError, match="multiclass FM training"):
+        with pytest.raises(NotImplementedError, match=cell):
             model.fit(X, y3)
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
@@ -124,11 +128,12 @@ def test_error_at_fit_not_init():
     FMClassifier(backend="bogus")
 
 
-def test_partial_fit_backend_cuda(rng):
-    """Binary FM partial_fit rides the same CUDA kernel as fit (state stays on
-    the CPU); without CUDA it errors clearly."""
+@pytest.mark.parametrize("cls", [FMClassifier, FFMClassifier])
+def test_partial_fit_backend_cuda(rng, cls):
+    """Binary FM/FFM partial_fit rides the same CUDA kernel as fit (state
+    stays on the CPU); without CUDA it errors clearly."""
     X, y = _xy(rng)
-    m = FMClassifier(backend="cuda", max_iter=2)
+    m = cls(backend="cuda", max_iter=2)
     if _backend.has_cuda():
         m.partial_fit(X, y, classes=[0, 1])
         assert m.predict(X).shape == (X.shape[0],)
@@ -139,13 +144,16 @@ def test_partial_fit_backend_cuda(rng):
 
 def test_partial_fit_cuda_unsupported_cells(rng):
     X, y = _xy(rng, n=30)
-    ffm = FFMClassifier(backend="cuda", max_iter=2)
+    fwfm = FwFMClassifier(backend="cuda", max_iter=2)
     fm3 = FMClassifier(backend="cuda", max_iter=2)
+    ffm3 = FFMClassifier(backend="cuda", max_iter=2)
     if _backend.has_cuda():
-        with pytest.raises(NotImplementedError, match="FM binary/regression training"):
-            ffm.partial_fit(X, y, classes=[0, 1])
+        with pytest.raises(NotImplementedError, match="FwFM training"):
+            fwfm.partial_fit(X, y, classes=[0, 1])
         with pytest.raises(NotImplementedError, match="multiclass FM training"):
             fm3.partial_fit(X, np.arange(30) % 3, classes=[0, 1, 2])
+        with pytest.raises(NotImplementedError, match="multiclass FFM training"):
+            ffm3.partial_fit(X, np.arange(30) % 3, classes=[0, 1, 2])
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
-            ffm.partial_fit(X, y, classes=[0, 1])
+            fwfm.partial_fit(X, y, classes=[0, 1])

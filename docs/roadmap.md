@@ -164,11 +164,18 @@ groundwork (kernels land separately, gated on real-GPU validation — see
   mini-batch's data-gradient (dense buffers, `atomicAdd`, CSR uploaded once
   per call), the untouched CPU flush applies SGD/AdaGrad/Adam/FTRL, so early
   stopping, `partial_fit`, `warm_start` and FTRL's exact L1 zeros work
-  unchanged. Multiclass/FFM/FwFM training still raise. Nondeterministic
+  unchanged. Multiclass/FwFM training still raise. Nondeterministic
   run-to-run (atomics); parity on final predictions at rtol 1e-7/atol 1e-8;
   requires compute >= 6.0. Perf follow-ups shipped: device-resident
   parameters + per-batch compact-vs-dense transfer switch
   (`2 * batch_nnz < n_features`).
+- [x] **CUDA FFM training accumulation** (gpu_backend_plan milestone 4):
+  binary/regression FFM fit with `backend="cuda"`
+  (`rust/src/cuda/ffm_train.rs`) — dense slot-gradient device buffer, host
+  touched-slot enumeration (pair loop minus the k-dot), gather/scatter
+  kernels so V stays device-resident and only touched (feature, field)
+  slots move; CPU flush reused verbatim (all optimizers + ES +
+  partial_fit/warm_start + FTRL L1 zeros). Same caveats as the FM path.
 
 ## v1.0 — stable release
 

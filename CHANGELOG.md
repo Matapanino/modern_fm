@@ -6,6 +6,17 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **CUDA FFM training accumulation** (docs/gpu_backend_plan.md milestone 4):
+  `FFMClassifier` (binary) and `FFMRegressor` now accept `backend="cuda"` at
+  fit (`rust/src/cuda/ffm_train.rs`). V stays device-resident; per batch the
+  GPU accumulates pair gradients into a dense slot buffer, a gather kernel
+  packs (and re-zeroes) only the touched (feature, field) slots for the CPU
+  optimizer flush, and a scatter kernel writes the flushed slots back — the
+  host pays the touched-slot enumeration (the pair loop without the k-dot).
+  All four optimizers, early stopping, `partial_fit`/`warm_start` and FTRL's
+  exact L1 zeros ride through the unchanged CPU flush, like the FM path.
+  Multiclass FFM and FwFM training still raise `NotImplementedError`; same
+  nondeterminism and compute >= 6.0 caveats as CUDA FM training.
 - **CUDA FM training accumulation** (docs/gpu_backend_plan.md milestone 3):
   `FMClassifier` (binary) and `FMRegressor` now accept `backend="cuda"` at
   fit — each mini-batch's data-gradient is accumulated on the GPU

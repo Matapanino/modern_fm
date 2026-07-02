@@ -34,7 +34,14 @@ from ._reference_train import (
     new_ftrl_state_fwfm,
 )
 from .ffm import _FFMBase
-from .fm import _check_X, _combine_weights, _predict_backend_guard, _smooth, _validate_X
+from .fm import (
+    _check_X,
+    _combine_weights,
+    _fit_backend_guard,
+    _predict_backend_guard,
+    _smooth,
+    _validate_X,
+)
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss
 
 
@@ -43,7 +50,9 @@ class _FwFMBase(_FFMBase):
     training/scoring for the four-group (w0, w, V, R) parameterization while
     reusing its validation and `field_ids` plumbing."""
 
-    _cuda_cell = "FwFM training"
+    def _validate_common(self):
+        super()._validate_common()
+        _fit_backend_guard(self.backend, "FwFM training")
 
     def _store_fitted(self, w0, w, V, R, n_features, n_iter, multiclass):
         out_dtype = np.float32 if self.dtype == "float32" else np.float64

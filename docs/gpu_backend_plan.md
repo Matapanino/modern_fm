@@ -27,7 +27,13 @@ Recommended order:
    touched-coordinate gradient buffers + touched-parameter scatter-back
    (when `2 * batch_nnz < n_features`) and full dense buffers (large/full
    batches).
-4. FFM binary/regression mini-batch gradient accumulation.
+4. FFM binary/regression mini-batch gradient accumulation. — **done
+   (unreleased, v0.6 work):** `rust/src/cuda/ffm_train.rs` — dense
+   slot-gradient buffer on device, host enumerates each batch's touched
+   (feature, field) slots (pair loop without the k-dot, ~k× cheaper than the
+   accumulation it replaces), gather kernel packs + re-zeroes only touched
+   slots, CPU flush reused verbatim, scatter kernel syncs V (device-resident)
+   back. Same optimizer/ES/partial_fit coverage and caveats as the FM path.
 5. Later: optimizer flush, multiclass, early-stopping state handoff,
    `partial_fit` / `warm_start` optimizer-state persistence.
 
