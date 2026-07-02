@@ -34,8 +34,24 @@ Recommended order:
    accumulation it replaces), gather kernel packs + re-zeroes only touched
    slots, CPU flush reused verbatim, scatter kernel syncs V (device-resident)
    back. Same optimizer/ES/partial_fit coverage and caveats as the FM path.
-5. Later: optimizer flush, multiclass, early-stopping state handoff,
-   `partial_fit` / `warm_start` optimizer-state persistence.
+5. FM + FFM multiclass (softmax) mini-batch gradient accumulation. — **done
+   (v1.1 work):** `rust/src/cuda/fm_train_mc.rs` + `ffm_train_mc.rs`. One
+   kernel scores all C classes per row from the frozen batch-start
+   parameters, replicates the CPU's stable softmax in class order (thread 0)
+   with label-smoothed targets, and accumulates per-class gradients; the
+   untouched CPU flush runs per class over `McState::class_views`, so all
+   four optimizers, early stopping and `partial_fit` ride through. The
+   touched set is shared across classes (one slot map serves all C). FM
+   stacks compact `(C, T)` gradient buffers; FFM splits score/softmax from
+   pair accumulation so ONE class-sized dense gv buffer serves every class
+   (VRAM stays parameters + 1×V-per-class, not C×). Device-resident
+   parameters scatter back per class (`fm_scatter_params` feature base
+   `c * n`; `ffm_scatter_slots` slot base `c * n * n_fields`). Same
+   nondeterminism/parity caveats as the binary paths. VRAM sizing: the
+   resident parameters alone are `C * n * (k + 1)` doubles (FM) /
+   `C * n * (n_fields * k + 1)` doubles (FFM) — e.g. FFM n=1e6, F=10, k=8,
+   C=10 ≈ 6.5 GB; allocation failures surface as clear `RuntimeError`s.
+6. Later: optimizer flush on GPU, FwFM cells.
 
 The first target should be large sparse CTR-style batches. Small batches,
 `batch_size=1`, and small dense toy inputs should stay on CPU because kernel
@@ -390,7 +406,10 @@ Preferred implementation direction:
 
 Do not implement multiclass CUDA training, early-stopping optimizer-state
 handoff, partial_fit/warm_start optimizer-state persistence, or GPU optimizer
-flush until prediction parity and benchmarks are in place.
+flush until prediction parity and benchmarks are in place. *(Deferral lifted
+in v1.1: multiclass CUDA training shipped as milestone 5 — ES and
+partial_fit state handoff came for free because the flush and all optimizer
+state stayed on the CPU. The GPU optimizer flush remains out of scope.)*
 
 Acceptance criteria for the first PR:
 - CPU-only tests still pass without CUDA.

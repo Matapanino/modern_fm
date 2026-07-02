@@ -1,5 +1,5 @@
-"""CUDA FM/FFM prediction + FM training parity (docs/gpu_backend_plan.md
-milestones 1-3).
+"""CUDA FM/FFM prediction + FM/FFM binary and multiclass training parity
+(docs/gpu_backend_plan.md milestones 1-5).
 
 Skipped entirely without a CUDA build + device — run on a real GPU per
 docs/cuda_validation_runbook.md before merging CUDA kernel changes.
@@ -420,6 +420,295 @@ def test_ffm_partial_fit_cuda():
     gpu = FFMClassifier(backend="cuda", **common)
     for m in (cpu, gpu):
         m.partial_fit(X[:80], y[:80], classes=[0, 1])
+        m.partial_fit(X[80:], y[80:])
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+
+
+def _mc_train_setup(seed=0, n=120, d=25, k=4, n_classes=3, epochs=3, density=0.3):
+    rng = np.random.default_rng(seed)
+    X = random_sparse_dense_X(rng, n, d, density=density)
+    margin = X @ rng.normal(size=d)
+    y = np.digitize(margin, np.quantile(margin, np.arange(1, n_classes) / n_classes))
+    params = (
+        np.zeros(n_classes),
+        rng.normal(size=(n_classes, d)) * 0.01,
+        rng.normal(size=(n_classes, d, k)) * 0.01,
+    )
+    row_orders = np.vstack([rng.permutation(n) for _ in range(epochs)]).astype(np.int64)
+    return X, y, params, row_orders
+
+
+def _fm_mc_logits(X, w0, w, V):
+    return np.column_stack(
+        [_backend.fm_predict_fast(X, float(w0[c]), w[c], V[c]) for c in range(len(w0))]
+    )
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+@pytest.mark.parametrize("batch_size", [1, 7, 120])
+@pytest.mark.parametrize("label_smoothing", [0.0, 0.1])
+def test_fm_multiclass_train_accumulation_parity(optimizer, batch_size, label_smoothing):
+    """CUDA per-class batch-gradient accumulation (softmax coupling on the
+    GPU) + CPU per-class optimizer flush vs the all-CPU multiclass kernel:
+    same init and row_orders, compare final per-class logits."""
+    X, y, params, row_orders = _mc_train_setup()
+    kwargs = dict(
+        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-4, l2_factors=1e-4,
+        row_orders=row_orders, batch_size=batch_size, label_smoothing=label_smoothing,
+    )
+    if optimizer == "ftrl":
+        kwargs.update(l1_linear=0.01, l1_factors=0.001)
+    w0_c, w_c, V_c = _backend.fm_fit_multiclass(X, y, params, **kwargs)
+    w0_g, w_g, V_g = _backend.fm_fit_multiclass(X, y, params, backend="cuda", **kwargs)
+    np.testing.assert_allclose(
+        _fm_mc_logits(X, w0_g, w_g, V_g), _fm_mc_logits(X, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_fm_multiclass_train_compact_multirow_parity():
+    """Multi-row batches touching far fewer features than d force the compact
+    C-stacked transfer path (shared slot map across classes)."""
+    X, y, params, row_orders = _mc_train_setup(seed=3, n=60, d=400, density=0.05)
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.1, l2_linear=1e-4, l2_factors=1e-4,
+        row_orders=row_orders, batch_size=4,
+    )
+    w0_c, w_c, V_c = _backend.fm_fit_multiclass(X, y, params, **kwargs)
+    w0_g, w_g, V_g = _backend.fm_fit_multiclass(X, y, params, backend="cuda", **kwargs)
+    np.testing.assert_allclose(
+        _fm_mc_logits(X, w0_g, w_g, V_g), _fm_mc_logits(X, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_fm_multiclass_train_mixed_dense_compact_parity():
+    """Full batches take the dense path, the trailing partial batch the
+    compact path — both must keep the C-stacked device parameters in sync."""
+    X, y, params, row_orders = _mc_train_setup(seed=4, n=60, d=280, density=10 / 280)
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.1, l2_linear=1e-4, l2_factors=1e-4,
+        row_orders=row_orders, batch_size=16,
+    )
+    w0_c, w_c, V_c = _backend.fm_fit_multiclass(X, y, params, **kwargs)
+    w0_g, w_g, V_g = _backend.fm_fit_multiclass(X, y, params, backend="cuda", **kwargs)
+    np.testing.assert_allclose(
+        _fm_mc_logits(X, w0_g, w_g, V_g), _fm_mc_logits(X, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_fm_multiclass_train_sample_weight_parity():
+    X, y, params, row_orders = _mc_train_setup(seed=1)
+    sw = np.random.default_rng(1).uniform(0.5, 2.0, size=len(y))
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.1, l2_linear=1e-4, l2_factors=1e-4,
+        row_orders=row_orders, batch_size=8, sample_weight=sw,
+    )
+    w0_c, w_c, V_c = _backend.fm_fit_multiclass(X, y, params, **kwargs)
+    w0_g, w_g, V_g = _backend.fm_fit_multiclass(X, y, params, backend="cuda", **kwargs)
+    np.testing.assert_allclose(
+        _fm_mc_logits(X, w0_g, w_g, V_g), _fm_mc_logits(X, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_fm_multiclass_ftrl_l1_yields_exact_zeros_on_cuda():
+    """The per-class FTRL flush stays on the CPU, so L1's exact zeros survive
+    the CUDA accumulation path in every class."""
+    X, y, params, row_orders = _mc_train_setup(seed=2, epochs=5)
+    _w0, w, _V = _backend.fm_fit_multiclass(
+        X, y, params, optimizer="ftrl", learning_rate=0.5,
+        l2_linear=0.0, l2_factors=0.0, l1_linear=0.5, l1_factors=0.1,
+        row_orders=row_orders, batch_size=4, backend="cuda",
+    )
+    assert np.sum(w == 0.0) > 0
+
+
+def test_fm_multiclass_estimator_fit_cuda_end_to_end():
+    """FMClassifier(loss='softmax') fit entirely with backend='cuda' vs an
+    identically-seeded CPU twin."""
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 200, 20, density=0.3)
+    margin = X @ rng.normal(size=20)
+    y = np.digitize(margin, np.quantile(margin, [1 / 3, 2 / 3]))
+    common = dict(n_factors=4, max_iter=5, random_state=0, dtype="float64", batch_size=16)
+    cpu = FMClassifier(**common).fit(X, y)
+    gpu = FMClassifier(backend="cuda", **common).fit(X, y)
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+    assert gpu.predict_proba(X).shape == (200, 3)
+
+
+def test_fm_multiclass_early_stopping_fit_cuda():
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 300, 20, density=0.3)
+    margin = X @ rng.normal(size=20)
+    y = np.digitize(margin, np.quantile(margin, [1 / 3, 2 / 3]))
+    common = dict(
+        n_factors=4, max_iter=6, random_state=0, dtype="float64",
+        early_stopping=True, patience=6, batch_size=32,
+    )
+    cpu = FMClassifier(**common).fit(X, y)
+    gpu = FMClassifier(backend="cuda", **common).fit(X, y)
+    assert gpu.n_iter_ == cpu.n_iter_
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+
+
+def test_fm_multiclass_partial_fit_cuda():
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 200, 20, density=0.3)
+    margin = X @ rng.normal(size=20)
+    y = np.digitize(margin, np.quantile(margin, [1 / 3, 2 / 3]))
+    common = dict(n_factors=4, max_iter=2, random_state=0, dtype="float64")
+    cpu = FMClassifier(**common)
+    gpu = FMClassifier(backend="cuda", **common)
+    for m in (cpu, gpu):
+        m.partial_fit(X[:100], y[:100], classes=[0, 1, 2])
+        m.partial_fit(X[100:], y[100:])
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+
+
+def _ffm_mc_train_setup(seed=0, n=100, d=25, n_fields=4, k=3, n_classes=3, epochs=3):
+    rng = np.random.default_rng(seed)
+    X = random_sparse_dense_X(rng, n, d, density=0.3)
+    margin = X @ rng.normal(size=d)
+    y = np.digitize(margin, np.quantile(margin, np.arange(1, n_classes) / n_classes))
+    field_ids = rng.integers(0, n_fields, size=d)
+    params = (
+        np.zeros(n_classes),
+        rng.normal(size=(n_classes, d)) * 0.01,
+        rng.normal(size=(n_classes, d, n_fields, k)) * 0.01,
+    )
+    row_orders = np.vstack([rng.permutation(n) for _ in range(epochs)]).astype(np.int64)
+    return X, y, field_ids, params, row_orders
+
+
+def _ffm_mc_logits(X, field_ids, w0, w, V):
+    return np.column_stack(
+        [
+            _backend.ffm_predict(X, field_ids, float(w0[c]), w[c], V[c])
+            for c in range(len(w0))
+        ]
+    )
+
+
+@pytest.mark.parametrize("optimizer", ["sgd", "adagrad", "adam", "ftrl"])
+@pytest.mark.parametrize("batch_size", [1, 7, 100])
+def test_ffm_multiclass_train_accumulation_parity(optimizer, batch_size):
+    """CUDA FFM multiclass (two-kernel: score/softmax + per-class pair
+    accumulation into one shared class-local gv) vs the all-CPU kernel."""
+    X, y, field_ids, params, row_orders = _ffm_mc_train_setup()
+    kwargs = dict(
+        optimizer=optimizer, learning_rate=0.1, l2_linear=1e-4, l2_factors=1e-4,
+        row_orders=row_orders, batch_size=batch_size,
+    )
+    if optimizer == "ftrl":
+        kwargs.update(l1_linear=0.01, l1_factors=0.001)
+    w0_c, w_c, V_c = _backend.ffm_fit_multiclass(X, y, field_ids, params, **kwargs)
+    w0_g, w_g, V_g = _backend.ffm_fit_multiclass(
+        X, y, field_ids, params, backend="cuda", **kwargs
+    )
+    np.testing.assert_allclose(
+        _ffm_mc_logits(X, field_ids, w0_g, w_g, V_g),
+        _ffm_mc_logits(X, field_ids, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_ffm_multiclass_train_label_smoothing_parity():
+    X, y, field_ids, params, row_orders = _ffm_mc_train_setup(seed=1)
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.1, l2_linear=1e-4, l2_factors=1e-4,
+        row_orders=row_orders, batch_size=8, label_smoothing=0.1,
+    )
+    w0_c, w_c, V_c = _backend.ffm_fit_multiclass(X, y, field_ids, params, **kwargs)
+    w0_g, w_g, V_g = _backend.ffm_fit_multiclass(
+        X, y, field_ids, params, backend="cuda", **kwargs
+    )
+    np.testing.assert_allclose(
+        _ffm_mc_logits(X, field_ids, w0_g, w_g, V_g),
+        _ffm_mc_logits(X, field_ids, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_ffm_multiclass_train_sample_weight_parity():
+    X, y, field_ids, params, row_orders = _ffm_mc_train_setup(seed=1)
+    sw = np.random.default_rng(1).uniform(0.5, 2.0, size=len(y))
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.1, l2_linear=1e-4, l2_factors=1e-4,
+        row_orders=row_orders, batch_size=8, sample_weight=sw,
+    )
+    w0_c, w_c, V_c = _backend.ffm_fit_multiclass(X, y, field_ids, params, **kwargs)
+    w0_g, w_g, V_g = _backend.ffm_fit_multiclass(
+        X, y, field_ids, params, backend="cuda", **kwargs
+    )
+    np.testing.assert_allclose(
+        _ffm_mc_logits(X, field_ids, w0_g, w_g, V_g),
+        _ffm_mc_logits(X, field_ids, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_ffm_multiclass_ftrl_l1_yields_exact_zeros_on_cuda():
+    X, y, field_ids, params, row_orders = _ffm_mc_train_setup(seed=2, epochs=5)
+    _w0, w, _V = _backend.ffm_fit_multiclass(
+        X, y, field_ids, params, optimizer="ftrl", learning_rate=0.5,
+        l2_linear=0.0, l2_factors=0.0, l1_linear=0.5, l1_factors=0.1,
+        row_orders=row_orders, batch_size=4, backend="cuda",
+    )
+    assert np.sum(w == 0.0) > 0
+
+
+def test_ffm_multiclass_estimator_fit_cuda_end_to_end():
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 150, 20, density=0.3)
+    margin = X @ rng.normal(size=20)
+    y = np.digitize(margin, np.quantile(margin, [1 / 3, 2 / 3]))
+    common = dict(n_factors=3, max_iter=5, random_state=0, dtype="float64", batch_size=16)
+    cpu = FFMClassifier(**common).fit(X, y)
+    gpu = FFMClassifier(backend="cuda", **common).fit(X, y)
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+    assert gpu.predict_proba(X).shape == (150, 3)
+
+
+def test_ffm_multiclass_early_stopping_fit_cuda():
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 200, 20, density=0.3)
+    margin = X @ rng.normal(size=20)
+    y = np.digitize(margin, np.quantile(margin, [1 / 3, 2 / 3]))
+    common = dict(
+        n_factors=3, max_iter=5, random_state=0, dtype="float64",
+        early_stopping=True, patience=5, batch_size=32,
+    )
+    cpu = FFMClassifier(**common).fit(X, y)
+    gpu = FFMClassifier(backend="cuda", **common).fit(X, y)
+    assert gpu.n_iter_ == cpu.n_iter_
+    np.testing.assert_allclose(
+        gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6
+    )
+
+
+def test_ffm_multiclass_partial_fit_cuda():
+    rng = np.random.default_rng(0)
+    X = random_sparse_dense_X(rng, 160, 20, density=0.3)
+    margin = X @ rng.normal(size=20)
+    y = np.digitize(margin, np.quantile(margin, [1 / 3, 2 / 3]))
+    common = dict(n_factors=3, max_iter=2, random_state=0, dtype="float64")
+    cpu = FFMClassifier(**common)
+    gpu = FFMClassifier(backend="cuda", **common)
+    for m in (cpu, gpu):
+        m.partial_fit(X[:80], y[:80], classes=[0, 1, 2])
         m.partial_fit(X[80:], y[80:])
     np.testing.assert_allclose(
         gpu.decision_function(X), cpu.decision_function(X), rtol=1e-6, atol=1e-6

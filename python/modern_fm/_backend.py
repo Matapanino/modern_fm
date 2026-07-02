@@ -236,6 +236,7 @@ def fm_fit_multiclass(
     X, y, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     label_smoothing=0.0, l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
     ftrl_beta=1.0, batch_size=1, sample_weight=None, state=None, adam_state=None, ftrl_state=None,
+    backend="rust_cpu",
 ):
     """Train a multiclass (softmax) FM (optimization_spec.md).
 
@@ -246,7 +247,17 @@ def fm_fit_multiclass(
     `state` (per-class AdaGrad accumulators) / `adam_state` / `ftrl_state`
     round-trip the optimizer state across epoch-driven early-stopping calls,
     through the Rust kernel when available.
+
+    `backend="cuda"` accumulates each batch's per-class data-gradients on the
+    GPU and keeps the per-class optimizer flush on the CPU
+    (docs/gpu_backend_plan.md milestone 5); it requires `has_cuda()`, is
+    nondeterministic run-to-run and never falls back silently.
     """
+    if backend == "cuda" and not has_cuda():
+        raise RuntimeError(
+            "backend='cuda' requires modern_fm built with the `cuda-backend` "
+            "Cargo feature and an NVIDIA GPU + driver at runtime"
+        )
     if _rust is None:
         return _reference_train.fm_fit_multiclass_reference(
             X, y, params, optimizer=optimizer, learning_rate=learning_rate,
@@ -274,7 +285,7 @@ def fm_fit_multiclass(
         indptr, indices, data, n_features, y, sw, w0, w, V,
         optimizer, learning_rate, l2_linear, l2_factors, label_smoothing,
         beta_1, beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
-        state=st_t, adam_state=adam_t, ftrl_state=ftrl_t,
+        state=st_t, adam_state=adam_t, ftrl_state=ftrl_t, use_cuda=backend == "cuda",
     )
     # all state arrays are mutated in place; write the prepped arrays back into
     # the callers' lists in case ascontiguousarray re-allocated
@@ -347,14 +358,22 @@ def ffm_fit_multiclass(
     X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     label_smoothing=0.0, l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
     ftrl_beta=1.0, batch_size=1, sample_weight=None, state=None, adam_state=None, ftrl_state=None,
+    backend="rust_cpu",
 ):
     """Train a multiclass (softmax) FFM (one FFM per class, coupled by softmax).
 
     `params` = (w0 (C,), w (C, n), V (C, n, n_fields, k)); `y` holds class indices
     in [0, C). Serial (no n_jobs), like FM multiclass. `state` / `adam_state` /
     `ftrl_state` round-trip the per-class optimizer state across epoch-driven
-    early-stopping calls through the Rust kernel (see fm_fit_multiclass).
+    early-stopping calls through the Rust kernel (see fm_fit_multiclass), as
+    does `backend="cuda"` (docs/gpu_backend_plan.md milestone 5; V stays
+    device-resident, one class-sized slot-gradient buffer serves all classes).
     """
+    if backend == "cuda" and not has_cuda():
+        raise RuntimeError(
+            "backend='cuda' requires modern_fm built with the `cuda-backend` "
+            "Cargo feature and an NVIDIA GPU + driver at runtime"
+        )
     if _rust is None:
         return _reference_train.ffm_fit_multiclass_reference(
             X, y, field_ids, params, optimizer=optimizer, learning_rate=learning_rate,
@@ -383,7 +402,7 @@ def ffm_fit_multiclass(
         indptr, indices, data, n_features, y, sw, field_ids, w0, w, V,
         optimizer, learning_rate, l2_linear, l2_factors, label_smoothing,
         beta_1, beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
-        state=st_t, adam_state=adam_t, ftrl_state=ftrl_t,
+        state=st_t, adam_state=adam_t, ftrl_state=ftrl_t, use_cuda=backend == "cuda",
     )
     # all state arrays are mutated in place; write the prepped arrays back into
     # the callers' lists in case ascontiguousarray re-allocated

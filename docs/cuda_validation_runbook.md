@@ -95,9 +95,10 @@ The PR description gets:
   into one module at the first CUDA call and cached process-wide
   (`rust/src/cuda/mod.rs`), so a driver too old for the generated PTX
   surfaces on that first call.
-- The current scope is **FM/FFM CSR prediction + FM/FFM binary/regression
-  training** (CUDA accumulation, CPU optimizer flush); multiclass training,
-  FwFM training and FwFM prediction intentionally raise `NotImplementedError`.
+- The current scope is **FM/FFM CSR prediction + FM/FFM
+  binary/regression/multiclass training** (CUDA accumulation, CPU optimizer
+  flush — per class via `McState::class_views` for multiclass); FwFM training
+  and FwFM prediction intentionally raise `NotImplementedError`.
   Training parity is tolerance-based on final predictions (atomicAdd makes it
   nondeterministic run-to-run) and needs compute capability >= 6.0.
 - `colab exec` runs with `--timeout 7200`: the full FM grid (1M-row cells)

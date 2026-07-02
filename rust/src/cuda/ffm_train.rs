@@ -48,6 +48,10 @@ use crate::optimizer::{AdamStateMut, FtrlStateMut, Loss, Optimizer};
 ///
 /// `ffm_scatter_slots`: writes the flushed `V` values of the touched slots
 /// back into the device-resident `v`.
+///
+/// Both slot kernels take a `slot_base` offset (0 for the binary path; the
+/// multiclass path gathers from its class-local gv at base 0 and scatters
+/// into the (C, n, n_fields, k) resident V at base `c * n * n_fields`).
 pub(super) const KERNEL_SRC: &str = r#"
 extern "C" __global__ void ffm_train_accum_csr(
     const long long* indptr,
@@ -145,6 +149,7 @@ extern "C" __global__ void ffm_gather_slots(
     const long long* slots,
     const long long n_slots,
     const long long k,
+    const long long slot_base,
     double* gv,
     double* out)
 {
@@ -152,7 +157,7 @@ extern "C" __global__ void ffm_gather_slots(
     if (s >= n_slots * k) {
         return;
     }
-    long long idx = slots[s / k] * k + (s % k);
+    long long idx = (slot_base + slots[s / k]) * k + (s % k);
     out[s] = gv[idx];
     gv[idx] = 0.0;
 }
@@ -162,13 +167,14 @@ extern "C" __global__ void ffm_scatter_slots(
     const double* values,
     const long long n_slots,
     const long long k,
+    const long long slot_base,
     double* v)
 {
     long long s = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (s >= n_slots * k) {
         return;
     }
-    v[slots[s / k] * k + (s % k)] = values[s];
+    v[(slot_base + slots[s / k]) * k + (s % k)] = values[s];
 }
 "#;
 
@@ -362,11 +368,13 @@ pub fn fit_csr(
                     shared_mem_bytes: 0,
                 };
                 let s_i64 = s_count as i64;
+                let slot_base: i64 = 0;
                 let mut launch = stream.launch_builder(&gather_func);
                 launch
                     .arg(&bufs.d_slots)
                     .arg(&s_i64)
                     .arg(&k_i64)
+                    .arg(&slot_base)
                     .arg(&mut d_gv)
                     .arg(&mut bufs.d_vals);
                 // Safety: gather reads/zeroes gv at the uploaded slot ids and
@@ -407,12 +415,14 @@ pub fn fit_csr(
                     shared_mem_bytes: 0,
                 };
                 let s_i64 = s_count as i64;
+                let slot_base: i64 = 0;
                 let mut launch = stream.launch_builder(&scatter_func);
                 launch
                     .arg(&bufs.d_slots)
                     .arg(&bufs.d_vals)
                     .arg(&s_i64)
                     .arg(&k_i64)
+                    .arg(&slot_base)
                     .arg(&mut d_v);
                 // Safety: scatter writes the k factors of each touched slot;
                 // slot ids are valid (feature * n_fields + field) by

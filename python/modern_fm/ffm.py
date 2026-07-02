@@ -40,7 +40,6 @@ from .fm import (
     _check_sample_weight,
     _check_X,
     _combine_weights,
-    _fit_backend_guard,
     _resolve_n_jobs,
     _select_class_slice,
     _smooth,
@@ -280,7 +279,7 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
         if multiclass:
             w0, w, V = _backend.ffm_fit_multiclass(
                 X, y, self.field_ids_, (w0, w, V), label_smoothing=self.label_smoothing,
-                **common, **self._opt_state,
+                backend=self.backend, **common, **self._opt_state,
             )
             self.w0_ = w0.astype(out_dtype)
         else:
@@ -376,7 +375,6 @@ class FFMClassifier(ClassifierMixin, _FFMBase):
                 "need at least 2 classes."
             )
         if self.classes_.shape[0] > 2 or self.loss == "softmax":
-            _fit_backend_guard(self.backend, "multiclass FFM training")
             if self.early_stopping or eval_set is not None:
                 eval_val = None
                 if eval_set is not None:
@@ -417,7 +415,6 @@ class FFMClassifier(ClassifierMixin, _FFMBase):
         n_classes = self.classes_.shape[0]
         multiclass = n_classes > 2 or self.loss == "softmax"
         if multiclass:
-            _fit_backend_guard(self.backend, "multiclass FFM training")
             if not 0.0 <= self.label_smoothing < 1.0:
                 raise ValueError(f"label_smoothing must be in [0, 1), got {self.label_smoothing}")
             y_target = np.searchsorted(self.classes_, y)
@@ -468,6 +465,7 @@ class FFMClassifier(ClassifierMixin, _FFMBase):
             ftrl_beta=self.ftrl_beta,
             batch_size=self.batch_size,
             sample_weight=sw,
+            backend=self.backend,
             **opt,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
@@ -531,6 +529,7 @@ class FFMClassifier(ClassifierMixin, _FFMBase):
                 beta_1=self.beta_1, beta_2=self.beta_2, epsilon=self.epsilon,
                 ftrl_beta=self.ftrl_beta, batch_size=self.batch_size, sample_weight=sw_tr,
                 state=state, adam_state=adam_state, ftrl_state=ftrl_state,
+                backend=self.backend,
             )
 
         def evaluate():
