@@ -166,8 +166,9 @@ groundwork (kernels land separately, gated on real-GPU validation — see
   stopping, `partial_fit`, `warm_start` and FTRL's exact L1 zeros work
   unchanged. Multiclass/FFM/FwFM training still raise. Nondeterministic
   run-to-run (atomics); parity on final predictions at rtol 1e-7/atol 1e-8;
-  requires compute >= 6.0. Sparse gradient buffers + device-resident params
-  are the follow-up before claiming training speed.
+  requires compute >= 6.0. Perf follow-ups shipped: device-resident
+  parameters + per-batch compact-vs-dense transfer switch
+  (`2 * batch_nnz < n_features`).
 
 ## v1.0 — stable release
 

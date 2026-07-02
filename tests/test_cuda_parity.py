@@ -191,6 +191,53 @@ def test_fm_train_accumulation_parity(optimizer, loss, batch_size):
     np.testing.assert_allclose(pred_g, pred_c, rtol=TRAIN_RTOL, atol=TRAIN_ATOL)
 
 
+@pytest.mark.parametrize("optimizer", ["adagrad", "adam"])
+def test_fm_train_compact_multirow_parity(optimizer):
+    """Shapes where a multi-row batch touches far fewer features than d force
+    the compact (sparse touched-coordinate) transfer path: atomics across rows
+    plus slot dedup, vs the all-CPU kernel."""
+    rng = np.random.default_rng(3)
+    n, d, k = 60, 400, 4
+    X = random_sparse_dense_X(rng, n, d, density=0.05)
+    y = (X @ rng.normal(size=d) > 0).astype(np.float64)
+    params = (0.0, rng.normal(size=d) * 0.01, rng.normal(size=(d, k)) * 0.01)
+    row_orders = np.vstack([rng.permutation(n) for _ in range(3)]).astype(np.int64)
+    kwargs = dict(
+        loss="logistic", optimizer=optimizer, learning_rate=0.1,
+        l2_linear=1e-4, l2_factors=1e-4, row_orders=row_orders, batch_size=4,
+    )
+    w0_c, w_c, V_c = _backend.fm_fit(X, y, params, **kwargs)
+    w0_g, w_g, V_g = _backend.fm_fit(X, y, params, backend="cuda", **kwargs)
+    np.testing.assert_allclose(
+        _backend.fm_predict_fast(X, w0_g, w_g, V_g),
+        _backend.fm_predict_fast(X, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
+def test_fm_train_mixed_dense_compact_parity():
+    """A shape where full batches take the dense-gradient path while the small
+    trailing partial batch takes the compact path — both modes must keep the
+    device-resident parameters in sync within one fit."""
+    rng = np.random.default_rng(4)
+    n, d, k = 60, 280, 4
+    X = random_sparse_dense_X(rng, n, d, density=10 / 280)
+    y = (X @ rng.normal(size=d) > 0).astype(np.float64)
+    params = (0.0, rng.normal(size=d) * 0.01, rng.normal(size=(d, k)) * 0.01)
+    row_orders = np.vstack([rng.permutation(n) for _ in range(3)]).astype(np.int64)
+    kwargs = dict(
+        loss="logistic", optimizer="adagrad", learning_rate=0.1,
+        l2_linear=1e-4, l2_factors=1e-4, row_orders=row_orders, batch_size=16,
+    )
+    w0_c, w_c, V_c = _backend.fm_fit(X, y, params, **kwargs)
+    w0_g, w_g, V_g = _backend.fm_fit(X, y, params, backend="cuda", **kwargs)
+    np.testing.assert_allclose(
+        _backend.fm_predict_fast(X, w0_g, w_g, V_g),
+        _backend.fm_predict_fast(X, w0_c, w_c, V_c),
+        rtol=TRAIN_RTOL, atol=TRAIN_ATOL,
+    )
+
+
 def test_fm_train_sample_weight_parity():
     X, margin, params, row_orders = _train_setup(seed=1)
     y = (margin > 0).astype(np.float64)
