@@ -14,10 +14,11 @@
 use std::sync::{Arc, Mutex};
 
 use cudarc::driver::{CudaContext, CudaModule};
-use cudarc::nvrtc::compile_ptx;
+use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 
 pub mod ffm;
 pub mod fm;
+pub mod fm_train;
 
 /// True when a CUDA driver can be loaded and at least one device exists.
 /// Every failure mode (no libcuda, no device, init error) reports
@@ -52,8 +53,21 @@ pub(crate) fn gpu() -> Result<(Arc<CudaContext>, Arc<CudaModule>), String> {
         .map_err(|_| "CUDA state mutex poisoned".to_string())?;
     if slot.is_none() {
         let ctx = CudaContext::new(0).map_err(|e| format!("CUDA context creation failed: {e:?}"))?;
-        let src = format!("{}\n{}", fm::KERNEL_SRC, ffm::KERNEL_SRC);
-        let ptx = compile_ptx(src).map_err(|e| format!("NVRTC compile failed: {e:?}"))?;
+        let src = format!(
+            "{}\n{}\n{}",
+            fm::KERNEL_SRC,
+            ffm::KERNEL_SRC,
+            fm_train::KERNEL_SRC
+        );
+        // compute_60: the training kernel's atomicAdd(double*, double) needs
+        // compute capability >= 6.0 (Pascal, 2016). The PTX JIT-compiles
+        // forward on every newer architecture.
+        let opts = CompileOptions {
+            arch: Some("compute_60"),
+            ..Default::default()
+        };
+        let ptx =
+            compile_ptx_with_opts(src, opts).map_err(|e| format!("NVRTC compile failed: {e:?}"))?;
         let module = ctx
             .load_module(ptx)
             .map_err(|e| format!("CUDA module load failed: {e:?}"))?;

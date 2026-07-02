@@ -43,6 +43,8 @@ class _FwFMBase(_FFMBase):
     training/scoring for the four-group (w0, w, V, R) parameterization while
     reusing its validation and `field_ids` plumbing."""
 
+    _cuda_cell = "FwFM training"
+
     def _store_fitted(self, w0, w, V, R, n_features, n_iter, multiclass):
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
         self.w0_ = w0.astype(out_dtype) if multiclass else float(w0)

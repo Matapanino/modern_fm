@@ -285,7 +285,7 @@ fn ffm_predict_csr<'py>(
     indptr, indices, data, n_features, y, sample_weight, w0, acc_w0, w, v, acc_w, acc_v,
     loss, optimizer, learning_rate, l2_linear, l2_factors, beta_1, beta_2, epsilon,
     row_orders, batch_size, n_jobs, l1_linear, l1_factors, ftrl_beta,
-    adam_state=None, ftrl_state=None,
+    adam_state=None, ftrl_state=None, use_cuda=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn fm_fit_csr<'py>(
@@ -318,6 +318,7 @@ fn fm_fit_csr<'py>(
     ftrl_beta: f64,
     mut adam_state: Option<FmAdamArg<'py>>,
     mut ftrl_state: Option<FmFtrlArg<'py>>,
+    use_cuda: bool,
 ) -> PyResult<FitScalars> {
     let loss = parse_loss(loss)?;
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
@@ -411,12 +412,26 @@ fn fm_fit_csr<'py>(
         check_fit_args(&csr, y_s, sw_s, &ro_shape, ro)?;
         let mut w0 = w0;
         let mut acc_w0 = acc_w0;
-        fm::fit_csr(
-            &csr, y_s, sw_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s,
-            adam_view, ftrl_view, k, loss, opt,
-            learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, ro_shape[1], batch_size,
-            n_jobs.max(1), ro,
-        );
+        if use_cuda {
+            #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+            cuda::fm_train::fit_csr(
+                &csr, y_s, sw_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s,
+                adam_view, ftrl_view, k, loss, opt,
+                learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, ro_shape[1],
+                batch_size, ro,
+            )?;
+            #[cfg(not(all(feature = "cuda-backend", not(target_os = "macos"))))]
+            return Err(
+                "use_cuda requires modern_fm built with the cuda-backend feature".to_string()
+            );
+        } else {
+            fm::fit_csr(
+                &csr, y_s, sw_s, &mut w0, w_s, v_s, &mut acc_w0, acc_w_s, acc_v_s,
+                adam_view, ftrl_view, k, loss, opt,
+                learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, ro_shape[1],
+                batch_size, n_jobs.max(1), ro,
+            );
+        }
         Ok((w0, acc_w0))
     });
     let (w0, acc_w0) = out.map_err(val_err)?;

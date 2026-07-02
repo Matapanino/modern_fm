@@ -108,16 +108,20 @@ fn train_score_row(
 /// with the batch-mean gradient plus lazy L2. Sized for one FM (one class in
 /// the multiclass kernel); backing arrays stay zero between batches because
 /// `flush` clears exactly the touched entries.
-struct FmGradAccum {
-    g_w0: f64,
-    gw: Vec<f64>,        // n_features
-    gv: Vec<f64>,        // n_features * k
-    touched: Vec<usize>, // features touched this batch
-    seen: Vec<bool>,     // membership flag for `touched`, n_features
+///
+/// `pub(crate)` (fields included) so the CUDA training path can load a
+/// device-accumulated batch into the same buffers and reuse `flush` — the
+/// optimizer semantics live in exactly one place.
+pub(crate) struct FmGradAccum {
+    pub(crate) g_w0: f64,
+    pub(crate) gw: Vec<f64>,        // n_features
+    pub(crate) gv: Vec<f64>,        // n_features * k
+    pub(crate) touched: Vec<usize>, // features touched this batch
+    pub(crate) seen: Vec<bool>,     // membership flag for `touched`, n_features
 }
 
 impl FmGradAccum {
-    fn new(n_features: usize, k: usize) -> Self {
+    pub(crate) fn new(n_features: usize, k: usize) -> Self {
         Self {
             g_w0: 0.0,
             gw: vec![0.0; n_features],
@@ -171,7 +175,7 @@ impl FmGradAccum {
     /// Apply one update per touched coordinate (bias always), then clear the
     /// touched entries back to zero so the buffers are reusable next batch.
     #[allow(clippy::too_many_arguments)]
-    fn flush(
+    pub(crate) fn flush(
         &mut self,
         bsz: f64,
         w0: &mut f64,

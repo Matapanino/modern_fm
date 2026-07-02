@@ -39,6 +39,7 @@ from .fm import (
     _check_sample_weight,
     _check_X,
     _combine_weights,
+    _fit_backend_guard,
     _resolve_n_jobs,
     _smooth,
     _validate_backend,
@@ -61,12 +62,15 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
         tags.input_tags.sparse = True
         return tags
 
+    _cuda_cell = "FFM training"  # cell named by the backend='cuda' fit guard
+
     def _validate_common(self):
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"unknown optimizer {self.optimizer!r}; expected one of {OPTIMIZERS}")
         if self.dtype not in ("float32", "float64"):
             raise ValueError(f"unknown dtype {self.dtype!r}; expected 'float32' or 'float64'")
         _validate_backend(self.backend)
+        _fit_backend_guard(self.backend, self._cuda_cell)
         if not (isinstance(self.batch_size, (int, np.integer)) and self.batch_size >= 1):
             raise ValueError(f"batch_size must be a positive integer, got {self.batch_size!r}")
         _resolve_n_jobs(self.n_jobs)  # validate (raises on a bad n_jobs)

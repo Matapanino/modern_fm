@@ -16,7 +16,14 @@ Recommended order:
 
 1. FM CSR prediction. — **done (v0.5.0)**
 2. FFM CSR prediction. — **done (unreleased, v0.6 work)**
-3. FM binary/regression mini-batch gradient accumulation.
+3. FM binary/regression mini-batch gradient accumulation. — **done
+   (unreleased, v0.6 work):** dense-buffer `atomicAdd` accumulation
+   (`rust/src/cuda/fm_train.rs`), CPU optimizer flush reused verbatim, so all
+   four optimizers + early stopping + `partial_fit`/`warm_start` work;
+   requires compute capability >= 6.0 (double `atomicAdd`); nondeterministic
+   run-to-run — parity is tolerance-based on final predictions. Sparse
+   touched-coordinate gradient buffers and device-resident parameters remain
+   open before claiming training performance.
 4. FFM binary/regression mini-batch gradient accumulation.
 5. Later: optimizer flush, multiclass, early-stopping state handoff,
    `partial_fit` / `warm_start` optimizer-state persistence.

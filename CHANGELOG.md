@@ -6,6 +6,21 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **CUDA FM training accumulation** (docs/gpu_backend_plan.md milestone 3):
+  `FMClassifier` (binary) and `FMRegressor` now accept `backend="cuda"` at
+  fit — each mini-batch's data-gradient is accumulated on the GPU
+  (`rust/src/cuda/fm_train.rs`; CSR/targets/row-order upload once per call,
+  w/V re-upload and dense gradients download per batch) while the optimizer
+  flush and **all** optimizer state stay on the CPU, so SGD/AdaGrad/Adam/FTRL,
+  early stopping, `partial_fit` and `warm_start` ride through unchanged
+  (FTRL's exact L1 zeros included). Multiclass FM, FFM and FwFM training
+  still raise `NotImplementedError`; there is never a silent fallback.
+  Caveats: CUDA training is **nondeterministic run-to-run** (atomic gradient
+  accumulation; the CPU backend keeps exact seeded reproducibility) and the
+  CUDA backend now requires compute capability >= 6.0 (Pascal, 2016 — the
+  shared module is compiled for `compute_60` because
+  `atomicAdd(double*, double)` needs it). Parity is tolerance-based on final
+  predictions (rtol 1e-7 / atol 1e-8, `tests/test_cuda_parity.py`).
 - **CUDA FFM prediction** (docs/gpu_backend_plan.md milestone 2): an NVRTC
   kernel for FFM CSR prediction (`rust/src/cuda/ffm.rs`, one block per row,
   256 threads striding the O(z²) pair loop, no row-nnz or k limit). Usage

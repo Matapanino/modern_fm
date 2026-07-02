@@ -1,11 +1,14 @@
-"""CUDA vs Rust-CPU FM/FFM prediction benchmark (docs/gpu_backend_plan.md).
+"""CUDA vs Rust-CPU FM/FFM prediction + FM training benchmark
+(docs/gpu_backend_plan.md).
 
-Transfer-INCLUSIVE: every CUDA call copies the CSR arrays + parameters to the
-device and the scores back, which is exactly what `backend="cuda"` inference
-pays today. The CUDA context and NVRTC-compiled module are process-cached, so
-only the very first CUDA call pays initialization — measured separately below.
-Run on a CUDA machine per docs/cuda_validation_runbook.md; prints machine info
-to paste into PRs.
+Transfer-INCLUSIVE: every CUDA prediction call copies the CSR arrays +
+parameters to the device and the scores back; a CUDA training call uploads the
+CSR/targets/row-order once, then re-uploads w/V and downloads the dense batch
+gradients every mini-batch (the optimizer flush stays on the CPU). That is
+exactly what `backend="cuda"` pays today. The CUDA context and NVRTC-compiled
+module are process-cached, so only the very first CUDA call pays
+initialization — measured separately below. Run on a CUDA machine per
+docs/cuda_validation_runbook.md; prints machine info to paste into PRs.
 
     .venv/bin/python benchmarks/bench_cuda.py
 """
@@ -99,6 +102,36 @@ def bench_ffm(rng, quick):
                 )
 
 
+def bench_fm_train(rng, quick):
+    """One binary-logistic epoch at the plan-doc batch sizes. The CUDA column
+    re-uploads w/V and downloads dense gradients per batch — small batches are
+    expected to lose to the CPU until parameters are device-resident."""
+    n_rows, d, avg_nnz, k = 100_000, 100_000, 32, 8
+    X = make_csr(n_rows, d, avg_nnz)
+    y = (rng.random(n_rows) > 0.5).astype(np.float64)
+    params = (0.0, rng.normal(size=d) * 0.01, rng.normal(size=(d, k)) * 0.01)
+    row_orders = rng.permutation(n_rows).astype(np.int64)[None, :]
+    kwargs = dict(
+        loss="logistic", optimizer="adagrad", learning_rate=0.05,
+        l2_linear=1e-6, l2_factors=1e-6, row_orders=row_orders,
+    )
+    batch_grid = (1024, n_rows) if quick else (256, 1024, 8192, n_rows)
+    print()
+    print(
+        "FM training, 1 epoch (Rust CPU n_jobs=1 vs CUDA accumulation + CPU flush; "
+        f"rows={n_rows}, nnz/row={avg_nnz}, k={k})"
+    )
+    print(f"{'batch':>10} {'cpu ms':>10} {'cuda ms':>10} {'speedup':>8}")
+    for bs in batch_grid:
+        cpu = timed(lambda: _backend.fm_fit(X, y, params, batch_size=bs, **kwargs), repeats=3)
+        cuda = timed(
+            lambda: _backend.fm_fit(X, y, params, batch_size=bs, backend="cuda", **kwargs),
+            repeats=3,
+        )
+        label = "full" if bs == n_rows else bs
+        print(f"{label:>10} {cpu * 1e3:>10.1f} {cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x")
+
+
 def main():
     quick = "--quick" in sys.argv  # trimmed grid for short validation runs
     print(f"machine: {platform.platform()} / python {platform.python_version()}")
@@ -113,6 +146,7 @@ def main():
     rng = np.random.default_rng(0)
     bench_fm(rng, quick)
     bench_ffm(rng, quick)
+    bench_fm_train(rng, quick)
 
 
 if __name__ == "__main__":

@@ -173,6 +173,7 @@ def fm_fit(
     X, y, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors, row_orders,
     l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8, ftrl_beta=1.0,
     batch_size=1, n_jobs=1, sample_weight=None, state=None, adam_state=None, ftrl_state=None,
+    backend="rust_cpu",
 ):
     """Train an FM (docs/optimization_spec.md).
 
@@ -186,7 +187,18 @@ def fm_fit(
     do the same for the Adam moments / FTRL (z, n) state — all three round-trip
     through the Rust kernel. The reference fallback is always serial (it is the
     n_jobs=1 ground truth).
+
+    `backend="cuda"` accumulates each batch's data-gradient on the GPU and
+    keeps the optimizer flush (and all optimizer state) on the CPU
+    (docs/gpu_backend_plan.md milestone 3); it requires `has_cuda()`, ignores
+    `n_jobs`, is nondeterministic run-to-run (atomic gradient accumulation)
+    and never falls back silently.
     """
+    if backend == "cuda" and not has_cuda():
+        raise RuntimeError(
+            "backend='cuda' requires modern_fm built with the `cuda-backend` "
+            "Cargo feature and an NVIDIA GPU + driver at runtime"
+        )
     if _rust is None:
         return _reference_train.fm_fit_reference(
             X, y, params, loss=loss, optimizer=optimizer, learning_rate=learning_rate,
@@ -207,7 +219,7 @@ def fm_fit(
         indptr, indices, data, n_features, y, sw, w0, acc_w0, w, V, acc_w, acc_v,
         loss, optimizer, learning_rate, l2_linear, l2_factors, beta_1, beta_2, epsilon,
         row_orders, batch_size, n_jobs, l1_linear, l1_factors, ftrl_beta,
-        adam_state=adam_t, ftrl_state=ftrl_t,
+        adam_state=adam_t, ftrl_state=ftrl_t, use_cuda=backend == "cuda",
     )
     if state is not None:
         state[0], state[1], state[2] = acc_w0, acc_w, acc_v

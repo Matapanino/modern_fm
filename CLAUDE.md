@@ -20,10 +20,13 @@ Current state: v0.5.0 is the released version (Rust early-stopping fast path,
 `FwFMClassifier`, `BiInteractionPooling`, and the optional CUDA backend:
 `cuda-backend` Cargo feature, T4-validated via `scripts/colab_gpu_test.sh` /
 `docs/cuda_validation_runbook.md`). Unreleased v0.6 work on main: CUDA FFM
-CSR prediction (`rust/src/cuda/ffm.rs`) alongside the v0.5 FM kernel, with
-the CUDA context + NVRTC module cached process-wide
-(`rust/src/cuda/mod.rs`); CUDA supports FM/FFM prediction only and is never
-a silent fallback. See `docs/roadmap.md` and
+CSR prediction (`rust/src/cuda/ffm.rs`) alongside the v0.5 FM kernel, the
+CUDA context + NVRTC module cached process-wide (`rust/src/cuda/mod.rs`),
+and CUDA FM binary/regression training accumulation
+(`rust/src/cuda/fm_train.rs`: GPU batch gradients + the CPU optimizer flush,
+so all optimizers/ES/partial_fit ride through; nondeterministic run-to-run,
+needs compute capability >= 6.0). CUDA supports FM/FFM prediction + FM
+binary/regression training and is never a silent fallback. See `docs/roadmap.md` and
 `docs/gpu_backend_plan.md`. Rust kernels in `rust/` cover
 FM/FFM prediction and training — FM binary (logistic/squared) + multiclass softmax
 and FFM binary (logistic/squared) + multiclass softmax, optimizers
