@@ -80,8 +80,27 @@ def fm_predict_fast(X, w0, w, V, backend="rust_cpu"):
     return _rust.fm_predict_fast_dense(_prep_dense(X), float(w0), w, V)
 
 
-def ffm_predict(X, field_ids, w0, w, V):
-    """FFM prediction (math_spec.md), Rust-accelerated when available."""
+def ffm_predict(X, field_ids, w0, w, V, backend="rust_cpu"):
+    """FFM prediction (math_spec.md), Rust-accelerated when available.
+
+    `backend="cuda"` runs the CUDA CSR kernel (dense X is converted;
+    transfer-inclusive per call, context/module process-cached — see
+    docs/gpu_backend_plan.md); it requires `has_cuda()` and never falls back
+    silently."""
+    if backend == "cuda":
+        if not has_cuda():
+            raise RuntimeError(
+                "backend='cuda' requires modern_fm built with the `cuda-backend` "
+                "Cargo feature and an NVIDIA GPU + driver at runtime"
+            )
+        field_ids = _prep_vec(field_ids, dtype=np.int64)
+        w = _prep_vec(w)
+        V = _prep_dense(V)
+        Xc = X if sp.issparse(X) else sp.csr_matrix(np.asarray(X, dtype=np.float64))
+        indptr, indices, data, n_features = _prep_csr(Xc)
+        return _rust.ffm_predict_cuda_csr(
+            indptr, indices, data, n_features, field_ids, float(w0), w, V
+        )
     if _rust is None:
         return _reference.ffm_predict(X, field_ids, w0, w, V)
     field_ids = _prep_vec(field_ids, dtype=np.int64)

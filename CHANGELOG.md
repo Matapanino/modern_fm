@@ -3,6 +3,28 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **CUDA FFM prediction** (docs/gpu_backend_plan.md milestone 2): an NVRTC
+  kernel for FFM CSR prediction (`rust/src/cuda/ffm.rs`, one block per row,
+  256 threads striding the O(z²) pair loop, no row-nnz or k limit). Usage
+  matches FM: fit on `backend="rust_cpu"`, then `set_params(backend="cuda")`
+  for inference on `FFMClassifier` (binary + multiclass) and `FFMRegressor`;
+  FwFM prediction and all training still raise `NotImplementedError` under
+  CUDA. Parity is tolerance-based (rtol/atol 1e-10, `tests/test_cuda_parity.py`)
+  and validated on a real GPU per `docs/cuda_validation_runbook.md`.
+- **CUDA context/module cache**: the device-0 context and the NVRTC-compiled
+  module holding all prediction kernels are now created once per process and
+  cached (`rust/src/cuda/mod.rs`); previously every predict call re-created
+  the context and re-compiled the kernel. Only the first CUDA call pays
+  initialization; calls stay transfer-inclusive (device-resident parameters
+  are a later milestone). `benchmarks/bench_cuda.py` gained the FFM grid and
+  a cold-start line separating first-call cost from steady-state timings.
+  First recorded T4 numbers (`benchmarks/README.md`): transfer-inclusive
+  speedups of 2.3–5.2x (FM) and 2.0–12.1x (FFM, serial CPU baseline) at
+  100k rows, with the one-time init at ~315 ms.
+
 ## [0.5.0] - 2026-07-02
 
 ### Added

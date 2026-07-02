@@ -34,7 +34,7 @@ model = FMClassifier(
     warm_start=False,         # fit() resumes from the previous solution + optimizer state
     dtype="float32",          # "float32" | "float64"
     backend="rust_cpu",       # or "cuda": requires a cuda-backend build + GPU and
-                              # supports FM prediction only (fit with "rust_cpu",
+                              # supports FM/FFM prediction only (fit with "rust_cpu",
                               # then set_params(backend="cuda") for inference);
                               # never a silent CPU fallback (gpu_backend_plan.md)
     random_state=None,

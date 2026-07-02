@@ -147,6 +147,19 @@ groundwork (kernels land separately, gated on real-GPU validation — see
   first) follow in a separate PR that merges only after validation on a real
   GPU (runbook in the PR). _Priority: P2._
 
+## v0.6 — in progress
+
+- [x] **CUDA FFM prediction + context/module cache** (gpu_backend_plan
+  milestone 2, pulled ahead of the post-1.0 GPU track): FFM CSR prediction
+  kernel (`rust/src/cuda/ffm.rs`, one block/row, 256-thread pair-strided
+  loop, no row-nnz/k limit; `FFMClassifier` binary+multiclass and
+  `FFMRegressor` inference via `set_params(backend="cuda")`), plus a
+  process-wide cache of the CUDA context + NVRTC module
+  (`rust/src/cuda/mod.rs`) so only the first call pays initialization.
+  Parity rtol/atol 1e-10, T4-validated per `docs/cuda_validation_runbook.md`;
+  `bench_cuda.py` gained the FFM grid + a cold-start line. Training,
+  FwFM-CUDA and device-resident parameters remain out of scope.
+
 ## v1.0 — stable release
 
 Headline model variant + production-CTR features + docs/bench polish + API

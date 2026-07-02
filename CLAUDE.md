@@ -18,9 +18,12 @@ The pure-NumPy **reference implementations** in `python/modern_fm/_reference.py`
 are the ground truth for all backends — never change them for speed.
 Current state: v0.5.0 is the released version (Rust early-stopping fast path,
 `FwFMClassifier`, `BiInteractionPooling`, and the optional CUDA backend:
-`cuda-backend` Cargo feature + FM CSR prediction kernel, T4-validated via
-`scripts/colab_gpu_test.sh` / `docs/cuda_validation_runbook.md`; CUDA supports
-FM prediction only and is never a silent fallback). See `docs/roadmap.md` and
+`cuda-backend` Cargo feature, T4-validated via `scripts/colab_gpu_test.sh` /
+`docs/cuda_validation_runbook.md`). Unreleased v0.6 work on main: CUDA FFM
+CSR prediction (`rust/src/cuda/ffm.rs`) alongside the v0.5 FM kernel, with
+the CUDA context + NVRTC module cached process-wide
+(`rust/src/cuda/mod.rs`); CUDA supports FM/FFM prediction only and is never
+a silent fallback. See `docs/roadmap.md` and
 `docs/gpu_backend_plan.md`. Rust kernels in `rust/` cover
 FM/FFM prediction and training — FM binary (logistic/squared) + multiclass softmax
 and FFM binary (logistic/squared) + multiclass softmax, optimizers
