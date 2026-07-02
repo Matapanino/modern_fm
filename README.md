@@ -89,6 +89,31 @@ Reproduce with `python benchmarks/bench_vs_baseline.py`. `xlearn` is auto-includ
 if importable, but it does not build on every platform (it failed to build here on
 macOS/arm64 + CPython 3.11).
 
+### Real click data (KDD Cup 2012 sample)
+
+On real CTR data — the KDD Cup 2012 track-2 sample from OpenML
+(`Click_prediction_small`; 200k impressions subsampled with seed 0, 9
+id-categorical fields → 373k one-hot features, 4.4% CTR, stratified 80/20
+split) — with libFM-style fixed hyperparameters (AdaGrad, L2 1e-4, built-in
+early stopping; not tuned to this benchmark):
+
+| Model | Test AUC | Fit (s) | Predict (krows/s) |
+|---|---:|---:|---:|
+| `LogisticRegression` (sklearn) | 0.6908 | 3.5 | 14 594 |
+| `FMClassifier` (k=8) | 0.6810 | 1.8 | 2 402 |
+| `FFMClassifier` (k=4) | 0.6721 | 5.1 | 1 211 |
+| `FwFMClassifier` (k=8) | 0.6891 | 2.8 | 2 481 |
+
+Honest read: this 9-field sample is dominated by rare ids (373k features for
+160k train rows), so second-order factor models only match — not beat — a
+well-regularized linear baseline; `FwFMClassifier` comes closest at a
+fraction of LR's predict throughput. The planted-interaction synthetic table
+above shows the regime where factor models pull ahead. Machine: macOS arm64
+(Apple Silicon), Python 3.11; reproduce with
+`python benchmarks/bench_criteo_like.py` (the original Criteo/Avazu samples
+are no longer publicly downloadable without credentials, so the bench uses
+this real CTR dataset via `fetch_openml` — details in the script docstring).
+
 ## Development
 
 Requires Python >= 3.10 and a recent Rust toolchain (1.74+; `rustup update`).

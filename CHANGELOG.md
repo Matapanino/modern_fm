@@ -6,6 +6,13 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 ## [Unreleased]
 
 ### Added
+- **Real-data CTR benchmark (v1.0 roadmap item)**:
+  `benchmarks/bench_criteo_like.py` — the KDD Cup 2012 track-2 click sample
+  from OpenML (zero-credential; the original Criteo/Avazu samples are gated
+  now, documented in the script), 200k rows / 373k one-hot features / 9
+  fields, fixed seed + stratified split + libFM-style fixed hyperparameters
+  with built-in early stopping. README gains the results table (honest:
+  FwFM 0.6891 ≈ LR 0.6908 on this singleton-heavy sample).
 - **`top_interactions(n_top, class_idx=None)` (v1.0 roadmap "Model
   inspection")** on every estimator: the strongest learned pairwise
   interactions as `(i, j, strength)` tuples — `|<V_i, V_j>|` for FM, the
