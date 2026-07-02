@@ -44,6 +44,7 @@ nav:
       - CUDA plan & status: gpu_backend_plan.md
       - Validation runbook: cuda_validation_runbook.md
   - Project:
+      - Compatibility policy: compat_policy.md
       - Roadmap: roadmap.md
       - Requirements: requirements.md
       - Test plan: test_plan.md

@@ -43,6 +43,13 @@ class ModelIOMixin:
     def load_model(cls, path):
         with open(path, "rb") as f:
             state = pickle.load(f)
+        version = state.get("format_version", 0)
+        if version > cls._IO_VERSION:
+            raise ValueError(
+                f"{path!r} was saved with a newer modern_fm (format_version "
+                f"{version}, this build reads <= {cls._IO_VERSION}); upgrade "
+                "modern_fm to load it (docs/compat_policy.md)"
+            )
         if state.get("class") != cls.__name__:
             raise ValueError(f"{path!r} holds a {state.get('class')!r}, not a {cls.__name__!r}")
         model = cls(**state["params"])
