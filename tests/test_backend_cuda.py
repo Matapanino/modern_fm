@@ -57,17 +57,18 @@ def test_fwfm_fit_cuda_not_implemented(rng):
             model.fit(X, y)
 
 
-@pytest.mark.parametrize(
-    "cls,cell",
-    [(FMClassifier, "multiclass FM training"), (FFMClassifier, "multiclass FFM training")],
-)
-def test_multiclass_fit_cuda_not_implemented(rng, cls, cell):
+@pytest.mark.parametrize("cls", [FMClassifier, FFMClassifier])
+def test_multiclass_fit_cuda_supported(rng, cls):
+    """Multiclass (softmax) FM/FFM training accumulates on CUDA
+    (gpu_backend_plan milestone 5); without CUDA the error stays clear,
+    never a CPU fallback."""
     X, _ = _xy(rng, n=30)
     y3 = np.arange(30) % 3
     model = cls(backend="cuda", max_iter=2)
     if _backend.has_cuda():
-        with pytest.raises(NotImplementedError, match=cell):
-            model.fit(X, y3)
+        model.fit(X, y3)
+        assert model.predict(X).shape == (X.shape[0],)
+        assert model.predict_proba(X).shape == (X.shape[0], 3)
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
             model.fit(X, y3)
@@ -142,18 +143,27 @@ def test_partial_fit_backend_cuda(rng, cls):
             m.partial_fit(X, y, classes=[0, 1])
 
 
+@pytest.mark.parametrize("cls", [FMClassifier, FFMClassifier])
+def test_partial_fit_multiclass_backend_cuda(rng, cls):
+    """Multiclass partial_fit rides the same CUDA kernel as fit (per-class
+    state stays on the CPU); without CUDA it errors clearly."""
+    X, _ = _xy(rng, n=30)
+    y3 = np.arange(30) % 3
+    m = cls(backend="cuda", max_iter=2)
+    if _backend.has_cuda():
+        m.partial_fit(X, y3, classes=[0, 1, 2])
+        assert m.predict_proba(X).shape == (X.shape[0], 3)
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            m.partial_fit(X, y3, classes=[0, 1, 2])
+
+
 def test_partial_fit_cuda_unsupported_cells(rng):
     X, y = _xy(rng, n=30)
     fwfm = FwFMClassifier(backend="cuda", max_iter=2)
-    fm3 = FMClassifier(backend="cuda", max_iter=2)
-    ffm3 = FFMClassifier(backend="cuda", max_iter=2)
     if _backend.has_cuda():
         with pytest.raises(NotImplementedError, match="FwFM training"):
             fwfm.partial_fit(X, y, classes=[0, 1])
-        with pytest.raises(NotImplementedError, match="multiclass FM training"):
-            fm3.partial_fit(X, np.arange(30) % 3, classes=[0, 1, 2])
-        with pytest.raises(NotImplementedError, match="multiclass FFM training"):
-            ffm3.partial_fit(X, np.arange(30) % 3, classes=[0, 1, 2])
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
             fwfm.partial_fit(X, y, classes=[0, 1])

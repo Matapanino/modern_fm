@@ -41,7 +41,10 @@ from ._reference_train import (
 )
 from .losses import logistic_loss, sigmoid, softmax, softmax_loss, squared_loss
 
-_CUDA_SCOPE = "backend='cuda' supports FM/FFM prediction and FM/FFM binary/regression training"
+_CUDA_SCOPE = (
+    "backend='cuda' supports FM/FFM prediction and FM/FFM "
+    "binary/regression/multiclass training"
+)
 
 
 def _validate_backend(backend):
@@ -49,12 +52,12 @@ def _validate_backend(backend):
 
     "rust_cpu" is the (only complete) default. "cuda" (docs/gpu_backend_plan.md)
     requires a `cuda-backend` build plus an NVIDIA driver + device (compute
-    capability >= 6.0) and supports FM/FFM prediction plus FM binary/regression
-    training; the per-cell guards (`_fit_backend_guard` /
-    `_predict_backend_guard`) reject everything else. There is deliberately no
-    silent CPU fallback. CUDA *training* is nondeterministic run-to-run
-    (atomic gradient accumulation) — the CPU backend keeps exact seeded
-    reproducibility.
+    capability >= 6.0) and supports FM/FFM prediction plus FM/FFM
+    binary/regression/multiclass training; the per-cell guards
+    (`_fit_backend_guard` / `_predict_backend_guard`) reject everything else
+    (FwFM). There is deliberately no silent CPU fallback. CUDA *training* is
+    nondeterministic run-to-run (atomic gradient accumulation) — the CPU
+    backend keeps exact seeded reproducibility.
     """
     if backend not in ("rust_cpu", "cuda"):
         raise ValueError(f"unknown backend {backend!r}; expected 'rust_cpu' or 'cuda'")
@@ -68,7 +71,7 @@ def _validate_backend(backend):
 
 def _fit_backend_guard(backend, cell):
     """Reject the training cells that have no CUDA kernel; never fall back
-    silently (multiclass FM, FFM and FwFM training run on the CPU)."""
+    silently (FwFM training runs on the CPU)."""
     if backend == "cuda":
         raise NotImplementedError(
             f"{_CUDA_SCOPE}; {cell} runs on backend='rust_cpu' "
@@ -411,7 +414,8 @@ class _FMBase(BaseEstimator, ModelIOMixin):
         )
         if multiclass:
             w0, w, V = _backend.fm_fit_multiclass(
-                X, y, (w0, w, V), label_smoothing=self.label_smoothing, **common, **self._opt_state
+                X, y, (w0, w, V), label_smoothing=self.label_smoothing,
+                backend=self.backend, **common, **self._opt_state,
             )
             self.w0_ = w0.astype(out_dtype)
         else:
@@ -505,7 +509,6 @@ class FMClassifier(ClassifierMixin, _FMBase):
             "need at least 2 classes."
         )
         if self.classes_.shape[0] > 2 or self.loss == "softmax":
-            _fit_backend_guard(self.backend, "multiclass FM training")
             if self.early_stopping or eval_set is not None:
                 eval_val = None
                 if eval_set is not None:
@@ -543,7 +546,6 @@ class FMClassifier(ClassifierMixin, _FMBase):
         n_classes = self.classes_.shape[0]
         multiclass = n_classes > 2 or self.loss == "softmax"
         if multiclass:
-            _fit_backend_guard(self.backend, "multiclass FM training")
             if not 0.0 <= self.label_smoothing < 1.0:
                 raise ValueError(f"label_smoothing must be in [0, 1), got {self.label_smoothing}")
             y_target = np.searchsorted(self.classes_, y)
@@ -594,6 +596,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
             ftrl_beta=self.ftrl_beta,
             batch_size=self.batch_size,
             sample_weight=sw,
+            backend=self.backend,
             **opt,
         )
         out_dtype = np.float32 if self.dtype == "float32" else np.float64
@@ -656,6 +659,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
                 beta_1=self.beta_1, beta_2=self.beta_2, epsilon=self.epsilon,
                 ftrl_beta=self.ftrl_beta, batch_size=self.batch_size, sample_weight=sw_tr,
                 state=state, adam_state=adam_state, ftrl_state=ftrl_state,
+                backend=self.backend,
             )
 
         def evaluate():

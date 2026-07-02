@@ -55,7 +55,8 @@ use crate::optimizer::{AdamStateMut, FtrlStateMut, Loss, Optimizer};
 ///
 /// `fm_scatter_params`: writes the flushed values of the `n_touched` touched
 /// coordinates (w and the k factors each) back into the device-resident
-/// parameter arrays.
+/// parameter arrays at feature base `base` (0 for the binary path; class
+/// offset `c * n` for the multiclass path, which stacks per-class parameters).
 pub(super) const KERNEL_SRC: &str = r#"
 extern "C" __global__ void fm_train_accum_csr(
     const long long* indptr,
@@ -147,6 +148,7 @@ extern "C" __global__ void fm_scatter_params(
     const double* v_u,
     const long long k,
     const long long n_touched,
+    const long long base,
     double* w,
     double* v)
 {
@@ -157,7 +159,7 @@ extern "C" __global__ void fm_scatter_params(
     }
     long long t = s / (k + 1);
     long long j = s % (k + 1);
-    long long i = touched[t];
+    long long i = base + touched[t];
     if (j == 0) {
         w[i] = w_u[t];
     } else {
@@ -416,6 +418,7 @@ pub fn fit_csr(
                     shared_mem_bytes: 0,
                 };
                 let t_i64 = t_count as i64;
+                let base: i64 = 0;
                 let mut launch = stream.launch_builder(&scatter_func);
                 launch
                     .arg(&d_touched)
@@ -423,6 +426,7 @@ pub fn fit_csr(
                     .arg(&d_vu)
                     .arg(&k_i64)
                     .arg(&t_i64)
+                    .arg(&base)
                     .arg(&mut d_w)
                     .arg(&mut d_v);
                 // Safety: scatter writes w[touched[t]] and the k factors of

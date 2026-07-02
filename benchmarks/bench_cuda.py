@@ -1,4 +1,4 @@
-"""CUDA vs Rust-CPU FM/FFM prediction + FM training benchmark
+"""CUDA vs Rust-CPU FM/FFM prediction + binary/multiclass training benchmark
 (docs/gpu_backend_plan.md).
 
 Transfer-INCLUSIVE: every CUDA prediction call copies the CSR arrays +
@@ -172,6 +172,99 @@ def bench_ffm_train(rng, quick):
         print(f"{label:>10} {cpu * 1e3:>10.1f} {cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x")
 
 
+def bench_fm_mc_train(rng, quick):
+    """One softmax multiclass FM epoch (gpu_backend_plan milestone 5): all C
+    class gradients accumulate in one kernel launch per batch (C-stacked
+    compact buffers), the per-class flush stays on the CPU. CPU multiclass is
+    serial, so this is the cell where the GPU replaces the most CPU work."""
+    n_rows, d, avg_nnz, k = 100_000, 100_000, 32, 8
+    X = make_csr(n_rows, d, avg_nnz)
+    row_orders = rng.permutation(n_rows).astype(np.int64)[None, :]
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.05,
+        l2_linear=1e-6, l2_factors=1e-6, row_orders=row_orders,
+    )
+    c_grid = (3,) if quick else (3, 10)
+    batch_grid = (1024, n_rows) if quick else (1024, 8192, n_rows)
+    print()
+    print(
+        "FM multiclass training, 1 epoch (Rust CPU serial vs CUDA accumulation + "
+        f"CPU per-class flush; rows={n_rows}, nnz/row={avg_nnz}, k={k})"
+    )
+    print(f"{'classes':>8} {'batch':>10} {'cpu ms':>10} {'cuda ms':>10} {'speedup':>8}")
+    for n_classes in c_grid:
+        y = rng.integers(0, n_classes, size=n_rows)
+        params = (
+            np.zeros(n_classes),
+            rng.normal(size=(n_classes, d)) * 0.01,
+            rng.normal(size=(n_classes, d, k)) * 0.01,
+        )
+        for bs in batch_grid:
+            cpu = timed(
+                lambda: _backend.fm_fit_multiclass(X, y, params, batch_size=bs, **kwargs),
+                repeats=3,
+            )
+            cuda = timed(
+                lambda: _backend.fm_fit_multiclass(
+                    X, y, params, batch_size=bs, backend="cuda", **kwargs
+                ),
+                repeats=3,
+            )
+            label = "full" if bs == n_rows else bs
+            print(
+                f"{n_classes:>8} {label:>10} {cpu * 1e3:>10.1f} "
+                f"{cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x"
+            )
+
+
+def bench_ffm_mc_train(rng, quick):
+    """One softmax multiclass FFM epoch: the score kernel does all C logits +
+    softmax in one launch, then per class a pair-accumulation kernel + gather
+    reuse one class-sized dense gv buffer (VRAM stays 1x V per class)."""
+    n_rows, d, avg_nnz, n_fields, k = 100_000, 100_000, 32, 8, 4
+    X = make_csr(n_rows, d, avg_nnz)
+    field_ids = rng.integers(0, n_fields, size=d)
+    row_orders = rng.permutation(n_rows).astype(np.int64)[None, :]
+    kwargs = dict(
+        optimizer="adagrad", learning_rate=0.05,
+        l2_linear=1e-6, l2_factors=1e-6, row_orders=row_orders,
+    )
+    c_grid = (3,) if quick else (3, 10)
+    batch_grid = (1024, n_rows) if quick else (1024, 8192, n_rows)
+    print()
+    print(
+        "FFM multiclass training, 1 epoch (Rust CPU serial vs CUDA two-kernel "
+        f"accumulation + CPU per-class flush; rows={n_rows}, nnz/row={avg_nnz}, "
+        f"fields={n_fields}, k={k})"
+    )
+    print(f"{'classes':>8} {'batch':>10} {'cpu ms':>10} {'cuda ms':>10} {'speedup':>8}")
+    for n_classes in c_grid:
+        y = rng.integers(0, n_classes, size=n_rows)
+        params = (
+            np.zeros(n_classes),
+            rng.normal(size=(n_classes, d)) * 0.01,
+            rng.normal(size=(n_classes, d, n_fields, k)) * 0.01,
+        )
+        for bs in batch_grid:
+            cpu = timed(
+                lambda: _backend.ffm_fit_multiclass(
+                    X, y, field_ids, params, batch_size=bs, **kwargs
+                ),
+                repeats=3,
+            )
+            cuda = timed(
+                lambda: _backend.ffm_fit_multiclass(
+                    X, y, field_ids, params, batch_size=bs, backend="cuda", **kwargs
+                ),
+                repeats=3,
+            )
+            label = "full" if bs == n_rows else bs
+            print(
+                f"{n_classes:>8} {label:>10} {cpu * 1e3:>10.1f} "
+                f"{cuda * 1e3:>10.1f} {cpu / cuda:>7.1f}x"
+            )
+
+
 def main():
     quick = "--quick" in sys.argv  # trimmed grid for short validation runs
     print(f"machine: {platform.platform()} / python {platform.python_version()}")
@@ -188,6 +281,8 @@ def main():
     bench_ffm(rng, quick)
     bench_fm_train(rng, quick)
     bench_ffm_train(rng, quick)
+    bench_fm_mc_train(rng, quick)
+    bench_ffm_mc_train(rng, quick)
 
 
 if __name__ == "__main__":

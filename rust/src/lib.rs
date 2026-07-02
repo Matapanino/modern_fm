@@ -443,13 +443,15 @@ fn fm_fit_csr<'py>(
 /// `state` (AdaGrad accumulators) / `adam_state` / `ftrl_state` are optional
 /// (C, ·) arrays mutated in place so the caller can drive epochs one at a time
 /// (early stopping); None keeps the state internal (single all-epochs call).
-/// batch_size=1, single-threaded; see fm::fit_multiclass_csr.
+/// `use_cuda` routes the batch accumulation to the CUDA backend
+/// (cuda::fm_train_mc); the optimizer flush stays on the CPU either way.
+/// See fm::fit_multiclass_csr.
 #[pyfunction]
 #[pyo3(signature = (
     indptr, indices, data, n_features, y, sample_weight, w0, w, v,
     optimizer, learning_rate, l2_linear, l2_factors, label_smoothing, beta_1, beta_2,
     epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
-    state=None, adam_state=None, ftrl_state=None,
+    state=None, adam_state=None, ftrl_state=None, use_cuda=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn fm_fit_multiclass_csr<'py>(
@@ -479,6 +481,7 @@ fn fm_fit_multiclass_csr<'py>(
     mut state: Option<FmMcStateArg<'py>>,
     mut adam_state: Option<FmMcAdamArg<'py>>,
     mut ftrl_state: Option<FmMcFtrlArg<'py>>,
+    use_cuda: bool,
 ) -> PyResult<()> {
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
     if batch_size == 0 {
@@ -603,11 +606,24 @@ fn fm_fit_multiclass_csr<'py>(
     let out = py.allow_threads(|| -> Result<(), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args_mc(&csr, y_s, n_classes, sw_s, &ro_shape, ro)?;
-        fm::fit_multiclass_csr(
-            &csr, y_s, sw_s, w0_s, w_s, v_s, st, n_classes, n_features, k, opt, learning_rate,
-            l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing, ro_shape[1], batch_size,
-            ro,
-        );
+        if use_cuda {
+            #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+            cuda::fm_train_mc::fit_multiclass_csr(
+                &csr, y_s, sw_s, w0_s, w_s, v_s, st, n_classes, n_features, k, opt, learning_rate,
+                l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing, ro_shape[1],
+                batch_size, ro,
+            )?;
+            #[cfg(not(all(feature = "cuda-backend", not(target_os = "macos"))))]
+            return Err(
+                "use_cuda requires modern_fm built with the cuda-backend feature".to_string()
+            );
+        } else {
+            fm::fit_multiclass_csr(
+                &csr, y_s, sw_s, w0_s, w_s, v_s, st, n_classes, n_features, k, opt, learning_rate,
+                l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing, ro_shape[1],
+                batch_size, ro,
+            );
+        }
         Ok(())
     });
     out.map_err(val_err)
@@ -779,13 +795,14 @@ fn ffm_fit_csr<'py>(
 /// Train a multiclass (softmax) FFM in place; w0 (C,), w (C, n_features) and
 /// v (C, n_features, n_fields, k) are all mutated. `y` holds class indices in
 /// [0, C). `state` / `adam_state` / `ftrl_state` behave as in
-/// fm_fit_multiclass_csr. Serial (no n_jobs); see ffm::fit_multiclass_csr.
+/// fm_fit_multiclass_csr, as does `use_cuda` (cuda::ffm_train_mc). Serial
+/// (no n_jobs); see ffm::fit_multiclass_csr.
 #[pyfunction]
 #[pyo3(signature = (
     indptr, indices, data, n_features, y, sample_weight, field_ids, w0, w, v,
     optimizer, learning_rate, l2_linear, l2_factors, label_smoothing, beta_1, beta_2,
     epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
-    state=None, adam_state=None, ftrl_state=None,
+    state=None, adam_state=None, ftrl_state=None, use_cuda=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn ffm_fit_multiclass_csr<'py>(
@@ -816,6 +833,7 @@ fn ffm_fit_multiclass_csr<'py>(
     mut state: Option<FfmMcStateArg<'py>>,
     mut adam_state: Option<FfmMcAdamArg<'py>>,
     mut ftrl_state: Option<FfmMcFtrlArg<'py>>,
+    use_cuda: bool,
 ) -> PyResult<()> {
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
     if batch_size == 0 {
@@ -939,11 +957,24 @@ fn ffm_fit_multiclass_csr<'py>(
     let out = py.allow_threads(|| -> Result<(), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args_mc(&csr, y_s, n_classes, sw_s, &ro_shape, ro)?;
-        ffm::fit_multiclass_csr(
-            &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, st, n_classes, n_features, n_fields, k,
-            opt, learning_rate, l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing,
-            ro_shape[1], batch_size, ro,
-        );
+        if use_cuda {
+            #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+            cuda::ffm_train_mc::fit_multiclass_csr(
+                &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, st, n_classes, n_features, n_fields,
+                k, opt, learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
+                label_smoothing, ro_shape[1], batch_size, ro,
+            )?;
+            #[cfg(not(all(feature = "cuda-backend", not(target_os = "macos"))))]
+            return Err(
+                "use_cuda requires modern_fm built with the cuda-backend feature".to_string()
+            );
+        } else {
+            ffm::fit_multiclass_csr(
+                &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, st, n_classes, n_features, n_fields,
+                k, opt, learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
+                label_smoothing, ro_shape[1], batch_size, ro,
+            );
+        }
         Ok(())
     });
     out.map_err(val_err)
