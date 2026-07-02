@@ -1,6 +1,6 @@
 [package]
 name = "modern-fm"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.74"
 description = "Rust backend for the modern_fm Python package"
@@ -11,10 +11,14 @@ name = "_rust"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# Optional CUDA backend (docs/gpu_backend_plan.md). cudarc's default
-# `fallback-dynamic-loading` dlopens the driver at runtime, so this feature
-# compiles WITHOUT a CUDA toolkit (verified by the ci.yml `cuda-check` job);
-# it is a no-op on macOS (no CUDA support), where the dependency is skipped.
+# Optional CUDA backend (docs/gpu_backend_plan.md). `dynamic-loading` is
+# pinned explicitly (not cudarc's default `fallback-dynamic-loading`, which
+# silently LINKS libcuda when a toolkit exists on the build machine): the
+# published Linux wheels build with this feature, and dlopen-only is what
+# keeps them manylinux-clean and importable on CUDA-less machines — the
+# release workflow's auditwheel check is the backstop. Compiles WITHOUT a
+# CUDA toolkit (verified by the ci.yml `cuda-check`/`cuda-wheel` jobs); it is
+# a no-op on macOS (no CUDA support), where the dependency is skipped.
 # cudarc requires pinning an API version: `cuda-12000` (CUDA 12.0) keeps the
 # generated bindings loadable on every CUDA 12 driver.
 cuda-backend = ["dep:cudarc"]
@@ -27,7 +31,7 @@ numpy = "0.25"
 rayon = "1"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-cudarc = { version = "0.19", optional = true, features = ["cuda-12000"] }
+cudarc = { version = "0.19", optional = true, features = ["cuda-12000", "dynamic-loading"] }
 
 [profile.release]
 lto = true

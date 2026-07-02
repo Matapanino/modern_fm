@@ -80,10 +80,48 @@ jobs:
           PYO3_PYTHON: python
         run: cargo clippy --all-targets --features cuda-backend -- -D warnings
 
+  # Standing proof that a cuda-backend wheel behaves like a CPU wheel on a
+  # CUDA-less machine: builds in manylinux without a CUDA toolkit, imports
+  # with has_cuda() False, and passes the full suite. This is the same wheel
+  # configuration release.yml publishes for Linux since 1.1.0.
+  cuda-wheel:
+    name: cuda-wheel (manylinux build + CPU-only import/tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # NB: CLI --features OVERRIDES pyproject's [tool.maturin] features, so
+      # pyo3/extension-module must be repeated (else the build links libpython,
+      # absent in manylinux).
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist --features cuda-backend,pyo3/extension-module
+          manylinux: auto
+      - name: Install the wheel (not the source tree)
+        run: |
+          pip install dist/*manylinux*.whl
+          pip install pytest pandas polars auditwheel
+      - name: Import on a CUDA-less machine, has_cuda() is False
+        run: |
+          python -c "import modern_fm; from modern_fm import _backend; assert _backend.has_rust(); assert _backend.has_cuda() is False"
+      - name: auditwheel — manylinux tag, no CUDA library in required libs
+        run: |
+          auditwheel show dist/*manylinux*.whl | tee audit.txt
+          grep -q "manylinux" audit.txt
+          if grep -iE "libcuda|libnvrtc" audit.txt; then
+            echo "wheel links a CUDA library — dynamic loading regressed" >&2
+            exit 1
+          fi
+      - name: Full test suite against the installed wheel
+        run: pytest -q
+
   ci-success:
     name: ci-success
     if: always()
-    needs: [test, rust, cuda-check]
+    needs: [test, rust, cuda-check, cuda-wheel]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job did not succeed

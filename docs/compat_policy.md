@@ -74,7 +74,12 @@ release where using it emits a `FutureWarning` naming the replacement, and
   CHANGELOG, never a patch.
 - scikit-learn / NumPy / SciPy: minimum versions in `pyproject.toml`; raising
   a minimum is a minor release.
-- Wheels: abi3 for Linux/macOS/Windows. The optional CUDA backend
-  (`cuda-backend` Cargo feature) is not part of published wheels; it is a
-  source-build feature and its cell coverage is documented in api_design —
-  expanding it is additive, shrinking it is breaking.
+- Wheels: abi3 for Linux/macOS/Windows. Since 1.1.0 the published **Linux**
+  wheels are built with the `cuda-backend` Cargo feature (cudarc dynamic
+  loading: no CUDA library is linked, `backend="cuda"` works wherever an
+  NVIDIA driver ≥ CUDA 12 is present, and on CUDA-less machines the wheel
+  behaves exactly like a CPU build — additive, verified by the release
+  workflow's CPU-only import/test/auditwheel gate). macOS/Windows wheels stay
+  CPU-only (source-build for CUDA elsewhere). The backend's cell coverage is
+  documented in api_design — expanding it is additive, shrinking it is
+  breaking.

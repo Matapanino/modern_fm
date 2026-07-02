@@ -3,6 +3,45 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-07-02
+
+Full CUDA coverage + CUDA-ready Linux wheels. Additive minor under
+`docs/compat_policy.md` — no API changes; `backend="cuda"` simply stops
+raising `NotImplementedError` anywhere.
+
+### Added
+- **CUDA multiclass (softmax) training for FM and FFM**
+  (docs/gpu_backend_plan.md milestone 5, T4-validated): the GPU accumulates
+  all C classes' batch gradients from the frozen batch-start parameters
+  (stable softmax in CPU class order + label-smoothed targets computed
+  in-kernel); the untouched CPU flush applies the optimizer per class via
+  `McState::class_views`, so SGD/AdaGrad/Adam/FTRL, L1 exact zeros, early
+  stopping and `partial_fit` state hand-offs are unchanged. FM stacks compact
+  `(C, T)` gradient buffers over one shared slot map; FFM splits
+  score/softmax from per-class pair accumulation so ONE class-sized dense
+  slot-gradient buffer serves every class (no C× VRAM blowup). T4 quick
+  bench: full-batch 4.0× (FM, C=3) / 5.3× (FFM, C=3) vs the serial CPU
+  multiclass kernel.
+- **FwFM CUDA — prediction, binary/regression and multiclass training**
+  (milestone 6, T4-validated): prediction kernel with FFM geometry, FM-shaped
+  V and the R field-pair weight; training kernels ride the FM compact
+  feature-slot machinery (both pair endpoints are row nonzeros) with a dense
+  `n_fields²` R-gradient buffer; the CPU flush including the R group
+  (`GroupStateMut`/`McGroupState`) is reused verbatim. Every prediction and
+  training cell (FM/FFM/FwFM × binary/regression/multiclass) is now
+  CUDA-covered; the per-cell guards are gone.
+- **CUDA-ready Linux wheels**: the published Linux wheels are built with the
+  `cuda-backend` feature. cudarc's `dynamic-loading` is pinned, so nothing
+  links libcuda/libnvrtc — the wheel stays manylinux-compliant, imports on
+  CUDA-less machines exactly like a CPU build (`has_cuda()` is `False`), and
+  `backend="cuda"` works wherever an NVIDIA driver (CUDA 12+) is present,
+  e.g. Colab/Kaggle GPU runtimes, with no source build. New CI job
+  (`cuda-wheel`) and release gate (`linux-wheel-check`: CPU-only
+  import/tests/auditwheel) enforce this on every PR and every release.
+  macOS/Windows wheels stay CPU-only.
+- `benchmarks/bench_cuda.py`: FwFM prediction/training and FM/FFM multiclass
+  training sections.
+
 ## [1.0.0] - 2026-07-02
 
 First stable release. The public API is now frozen under the SemVer contract
