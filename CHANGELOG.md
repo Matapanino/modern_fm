@@ -9,11 +9,14 @@ All notable changes to `modern_fm` are documented here. This project adheres to
 - **CUDA FM training accumulation** (docs/gpu_backend_plan.md milestone 3):
   `FMClassifier` (binary) and `FMRegressor` now accept `backend="cuda"` at
   fit — each mini-batch's data-gradient is accumulated on the GPU
-  (`rust/src/cuda/fm_train.rs`; CSR/targets/row-order upload once per call,
-  w/V re-upload and dense gradients download per batch) while the optimizer
-  flush and **all** optimizer state stay on the CPU, so SGD/AdaGrad/Adam/FTRL,
-  early stopping, `partial_fit` and `warm_start` ride through unchanged
-  (FTRL's exact L1 zeros included). Multiclass FM, FFM and FwFM training
+  (`rust/src/cuda/fm_train.rs`; CSR/targets/row-order/parameters upload once
+  per call and the parameters stay device-resident; per batch the transfers
+  switch between compact touched-coordinate gradient buffers with
+  touched-only parameter scatter-back, for small batches, and full dense
+  buffers, for large ones) while the optimizer flush and **all** optimizer
+  state stay on the CPU, so SGD/AdaGrad/Adam/FTRL, early stopping,
+  `partial_fit` and `warm_start` ride through unchanged (FTRL's exact L1
+  zeros included). Multiclass FM, FFM and FwFM training
   still raise `NotImplementedError`; there is never a silent fallback.
   Caveats: CUDA training is **nondeterministic run-to-run** (atomic gradient
   accumulation; the CPU backend keeps exact seeded reproducibility) and the

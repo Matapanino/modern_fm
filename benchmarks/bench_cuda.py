@@ -3,9 +3,11 @@
 
 Transfer-INCLUSIVE: every CUDA prediction call copies the CSR arrays +
 parameters to the device and the scores back; a CUDA training call uploads the
-CSR/targets/row-order once, then re-uploads w/V and downloads the dense batch
-gradients every mini-batch (the optimizer flush stays on the CPU). That is
-exactly what `backend="cuda"` pays today. The CUDA context and NVRTC-compiled
+CSR/targets/row-order/parameters once (parameters stay device-resident), then
+per mini-batch moves either compact touched-coordinate gradient buffers +
+touched-parameter scatter-backs (small batches) or full dense buffers (large
+batches) — the optimizer flush stays on the CPU. That is exactly what
+`backend="cuda"` pays today. The CUDA context and NVRTC-compiled
 module are process-cached, so only the very first CUDA call pays
 initialization — measured separately below. Run on a CUDA machine per
 docs/cuda_validation_runbook.md; prints machine info to paste into PRs.
@@ -103,9 +105,10 @@ def bench_ffm(rng, quick):
 
 
 def bench_fm_train(rng, quick):
-    """One binary-logistic epoch at the plan-doc batch sizes. The CUDA column
-    re-uploads w/V and downloads dense gradients per batch — small batches are
-    expected to lose to the CPU until parameters are device-resident."""
+    """One binary-logistic epoch at the plan-doc batch sizes. Small batches
+    ride the compact touched-coordinate transfer path (parameters
+    device-resident, touched-only scatter-back); large batches use full dense
+    gradient buffers."""
     n_rows, d, avg_nnz, k = 100_000, 100_000, 32, 8
     X = make_csr(n_rows, d, avg_nnz)
     y = (rng.random(n_rows) > 0.5).astype(np.float64)
