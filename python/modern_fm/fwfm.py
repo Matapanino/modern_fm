@@ -38,8 +38,6 @@ from .fm import (
     _check_n_top,
     _check_X,
     _combine_weights,
-    _fit_backend_guard,
-    _predict_backend_guard,
     _select_class_slice,
     _smooth,
     _validate_X,
@@ -51,10 +49,6 @@ class _FwFMBase(_FFMBase):
     """Shared FwFM machinery: overrides `_FFMBase`'s parameter-shape-specific
     training/scoring for the four-group (w0, w, V, R) parameterization while
     reusing its validation and `field_ids` plumbing."""
-
-    def _validate_common(self):
-        super()._validate_common()
-        _fit_backend_guard(self.backend, "FwFM training")
 
     def top_interactions(self, n_top=10, class_idx=None):
         """The `n_top` strongest learned pairwise interactions.
@@ -90,6 +84,7 @@ class _FwFMBase(_FFMBase):
             row_orders=row_orders, beta_1=self.beta_1, beta_2=self.beta_2,
             epsilon=self.epsilon, ftrl_beta=self.ftrl_beta,
             batch_size=self.batch_size, sample_weight=sample_weight,
+            backend=self.backend,
         )
 
     def _fit_core(self, X, y, loss, sample_weight=None):
@@ -444,7 +439,6 @@ class FwFMClassifier(ClassifierMixin, _FwFMBase):
         return self._store_fitted(w0, w, V, R, n_features, n_iter, multiclass=True)
 
     def decision_function(self, X):
-        _predict_backend_guard(self.backend, "FwFM")
         check_is_fitted(self)
         X = _validate_X(self, X, reset=False)
         if self.V_.ndim == 3:  # multiclass: per-class FwFM logits -> (n, n_classes)
@@ -452,12 +446,14 @@ class FwFMClassifier(ClassifierMixin, _FwFMBase):
                 [
                     _backend.fwfm_predict(
                         X, self.field_ids_, float(self.w0_[c]), self.w_[c], self.V_[c],
-                        self.r_[c],
+                        self.r_[c], backend=self.backend,
                     )
                     for c in range(self.V_.shape[0])
                 ]
             )
-        return _backend.fwfm_predict(X, self.field_ids_, self.w0_, self.w_, self.V_, self.r_)
+        return _backend.fwfm_predict(
+            X, self.field_ids_, self.w0_, self.w_, self.V_, self.r_, backend=self.backend
+        )
 
     def predict_proba(self, X):
         scores = self.decision_function(X)

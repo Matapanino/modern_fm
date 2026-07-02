@@ -415,8 +415,25 @@ def ffm_fit_multiclass(
     return w0, w, V
 
 
-def fwfm_predict(X, field_ids, w0, w, V, r):
-    """FwFM prediction (math_spec_fwfm.md), Rust-accelerated when available."""
+def fwfm_predict(X, field_ids, w0, w, V, r, backend="rust_cpu"):
+    """FwFM prediction (math_spec_fwfm.md), Rust-accelerated when available.
+
+    `backend="cuda"` runs the CUDA kernel (dense X converts to CSR first, the
+    same nonzero set the CPU paths iterate); requires `has_cuda()` and never
+    falls back silently."""
+    if backend == "cuda":
+        if not has_cuda():
+            raise RuntimeError(
+                "backend='cuda' requires modern_fm built with the `cuda-backend` "
+                "Cargo feature and an NVIDIA GPU + driver at runtime"
+            )
+        field_ids = _prep_vec(field_ids, dtype=np.int64)
+        Xc = X if sp.issparse(X) else sp.csr_matrix(np.asarray(X, dtype=np.float64))
+        indptr, indices, data, n_features = _prep_csr(Xc)
+        return _rust.fwfm_predict_cuda_csr(
+            indptr, indices, data, n_features, field_ids, float(w0),
+            _prep_vec(w), _prep_dense(V), _prep_dense(r),
+        )
     if _rust is None:
         return _reference.fwfm_predict(X, field_ids, w0, w, V, r)
     field_ids = _prep_vec(field_ids, dtype=np.int64)
@@ -444,13 +461,23 @@ def fwfm_fit(
     X, y, field_ids, params, *, loss, optimizer, learning_rate, l2_linear, l2_factors,
     row_orders, l1_linear=0.0, l1_factors=0.0, beta_1=0.9, beta_2=0.999, epsilon=1e-8,
     ftrl_beta=1.0, batch_size=1, sample_weight=None, state=None, adam_state=None,
-    ftrl_state=None,
+    ftrl_state=None, backend="rust_cpu",
 ):
     """Train an FwFM (math_spec_fwfm.md); `params` = (w0, w, V, R), returns new
     float64 copies. Serial (no n_jobs in v0.5). `state` = [acc_w0, acc_w,
     acc_V, acc_R]; `adam_state` / `ftrl_state` follow `new_adam_state_fwfm` /
     `new_ftrl_state_fwfm` and round-trip through the Rust kernel, like fm_fit.
+
+    `backend="cuda"` accumulates each batch's data-gradients (incl. the R
+    group) on the GPU and keeps the optimizer flush on the CPU
+    (docs/gpu_backend_plan.md milestone 6); it requires `has_cuda()`, is
+    nondeterministic run-to-run and never falls back silently.
     """
+    if backend == "cuda" and not has_cuda():
+        raise RuntimeError(
+            "backend='cuda' requires modern_fm built with the `cuda-backend` "
+            "Cargo feature and an NVIDIA GPU + driver at runtime"
+        )
     if _rust is None:
         return _reference_train.fwfm_fit_reference(
             X, y, field_ids, params, loss=loss, optimizer=optimizer,
@@ -474,7 +501,7 @@ def fwfm_fit(
         indptr, indices, data, n_features, y, sw, field_ids, w0, acc_w0, w, V, r,
         acc_w, acc_v, acc_r, loss, optimizer, learning_rate, l2_linear, l2_factors,
         beta_1, beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
-        adam_state=adam_t, ftrl_state=ftrl_t,
+        adam_state=adam_t, ftrl_state=ftrl_t, use_cuda=backend == "cuda",
     )
     if state is not None:
         state[0], state[1], state[2], state[3] = acc_w0, acc_w, acc_v, acc_r
@@ -491,14 +518,20 @@ def fwfm_fit_multiclass(
     X, y, field_ids, params, *, optimizer, learning_rate, l2_linear, l2_factors,
     row_orders, label_smoothing=0.0, l1_linear=0.0, l1_factors=0.0, beta_1=0.9,
     beta_2=0.999, epsilon=1e-8, ftrl_beta=1.0, batch_size=1, sample_weight=None,
-    state=None, adam_state=None, ftrl_state=None,
+    state=None, adam_state=None, ftrl_state=None, backend="rust_cpu",
 ):
     """Train a multiclass (softmax) FwFM (one FwFM per class, coupled by softmax).
 
     `params` = (w0 (C,), w (C, n), V (C, n, k), R (C, F, F)); `y` holds class
     indices in [0, C). Serial. `state` / `adam_state` / `ftrl_state` round-trip
-    the per-class optimizer state through the Rust kernel (see fm_fit_multiclass).
+    the per-class optimizer state through the Rust kernel (see fm_fit_multiclass),
+    as does `backend="cuda"` (docs/gpu_backend_plan.md milestone 6).
     """
+    if backend == "cuda" and not has_cuda():
+        raise RuntimeError(
+            "backend='cuda' requires modern_fm built with the `cuda-backend` "
+            "Cargo feature and an NVIDIA GPU + driver at runtime"
+        )
     if _rust is None:
         return _reference_train.fwfm_fit_multiclass_reference(
             X, y, field_ids, params, optimizer=optimizer, learning_rate=learning_rate,
@@ -528,7 +561,7 @@ def fwfm_fit_multiclass(
         indptr, indices, data, n_features, y, sw, field_ids, w0, w, V, r,
         optimizer, learning_rate, l2_linear, l2_factors, label_smoothing,
         beta_1, beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
-        state=st_t, adam_state=adam_t, ftrl_state=ftrl_t,
+        state=st_t, adam_state=adam_t, ftrl_state=ftrl_t, use_cuda=backend == "cuda",
     )
     # all state arrays are mutated in place; write the prepped arrays back into
     # the callers' lists in case ascontiguousarray re-allocated

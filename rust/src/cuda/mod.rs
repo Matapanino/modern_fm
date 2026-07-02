@@ -22,6 +22,8 @@ pub mod ffm_train_mc;
 pub mod fm;
 pub mod fm_train;
 pub mod fm_train_mc;
+pub mod fwfm;
+pub mod fwfm_train;
 
 /// True when a CUDA driver can be loaded and at least one device exists.
 /// Every failure mode (no libcuda, no device, init error) reports
@@ -57,13 +59,15 @@ pub(crate) fn gpu() -> Result<(Arc<CudaContext>, Arc<CudaModule>), String> {
     if slot.is_none() {
         let ctx = CudaContext::new(0).map_err(|e| format!("CUDA context creation failed: {e:?}"))?;
         let src = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             fm::KERNEL_SRC,
             ffm::KERNEL_SRC,
             fm_train::KERNEL_SRC,
             ffm_train::KERNEL_SRC,
             fm_train_mc::KERNEL_SRC,
-            ffm_train_mc::KERNEL_SRC
+            ffm_train_mc::KERNEL_SRC,
+            fwfm::KERNEL_SRC,
+            fwfm_train::KERNEL_SRC
         );
         // compute_60: the training kernel's atomicAdd(double*, double) needs
         // compute capability >= 6.0 (Pascal, 2016). The PTX JIT-compiles

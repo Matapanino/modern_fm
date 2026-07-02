@@ -1049,13 +1049,15 @@ fn fwfm_predict_csr<'py>(
 /// Train an FwFM in place (w, v, r, acc_*, adam/ftrl arrays mutated; scalar
 /// returns as in fm_fit_csr). `acc_r` is the R group's AdaGrad accumulator;
 /// `adam_state`/`ftrl_state` append the R slots (docs/math_spec_fwfm.md).
+/// `use_cuda` routes the batch accumulation to the CUDA backend
+/// (cuda::fwfm_train); the optimizer flush stays on the CPU either way.
 /// Serial; see fwfm::fit_csr.
 #[pyfunction]
 #[pyo3(signature = (
     indptr, indices, data, n_features, y, sample_weight, field_ids, w0, acc_w0, w, v, r,
     acc_w, acc_v, acc_r, loss, optimizer, learning_rate, l2_linear, l2_factors, beta_1,
     beta_2, epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
-    adam_state=None, ftrl_state=None,
+    adam_state=None, ftrl_state=None, use_cuda=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn fwfm_fit_csr<'py>(
@@ -1090,6 +1092,7 @@ fn fwfm_fit_csr<'py>(
     ftrl_beta: f64,
     mut adam_state: Option<FwfmAdamArg<'py>>,
     mut ftrl_state: Option<FwfmFtrlArg<'py>>,
+    use_cuda: bool,
 ) -> PyResult<FitScalars> {
     let loss = parse_loss(loss)?;
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
@@ -1212,12 +1215,26 @@ fn fwfm_fit_csr<'py>(
         check_fit_args(&csr, y_s, sw_s, &ro_shape, ro)?;
         let mut w0 = w0;
         let mut acc_w0 = acc_w0;
-        fwfm::fit_csr(
-            &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, r_s, &mut acc_w0, acc_w_s, acc_v_s,
-            adam_view, ftrl_view, r_view, n_fields, k, loss, opt,
-            learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
-            ro_shape[1], batch_size, ro,
-        );
+        if use_cuda {
+            #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+            cuda::fwfm_train::fit_csr(
+                &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, r_s, &mut acc_w0, acc_w_s,
+                acc_v_s, adam_view, ftrl_view, r_view, n_fields, k, loss, opt,
+                learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
+                ro_shape[1], batch_size, ro,
+            )?;
+            #[cfg(not(all(feature = "cuda-backend", not(target_os = "macos"))))]
+            return Err(
+                "use_cuda requires modern_fm built with the cuda-backend feature".to_string()
+            );
+        } else {
+            fwfm::fit_csr(
+                &csr, y_s, sw_s, field_ids_s, &mut w0, w_s, v_s, r_s, &mut acc_w0, acc_w_s,
+                acc_v_s, adam_view, ftrl_view, r_view, n_fields, k, loss, opt,
+                learning_rate, l1_linear, l2_linear, l1_factors, l2_factors,
+                ro_shape[1], batch_size, ro,
+            );
+        }
         Ok((w0, acc_w0))
     });
     let (w0, acc_w0) = out.map_err(val_err)?;
@@ -1226,14 +1243,15 @@ fn fwfm_fit_csr<'py>(
 
 /// Train a multiclass (softmax) FwFM in place; w0 (C,), w (C, n),
 /// v (C, n, k), r (C, F, F) all mutated. `state` = (acc_w0, acc_w, acc_V,
-/// acc_R); `adam_state`/`ftrl_state` append the R slots. Serial; see
+/// acc_R); `adam_state`/`ftrl_state` append the R slots. `use_cuda` behaves
+/// as in fwfm_fit_csr (cuda::fwfm_train). Serial; see
 /// fwfm::fit_multiclass_csr.
 #[pyfunction]
 #[pyo3(signature = (
     indptr, indices, data, n_features, y, sample_weight, field_ids, w0, w, v, r,
     optimizer, learning_rate, l2_linear, l2_factors, label_smoothing, beta_1, beta_2,
     epsilon, row_orders, batch_size, l1_linear, l1_factors, ftrl_beta,
-    state=None, adam_state=None, ftrl_state=None,
+    state=None, adam_state=None, ftrl_state=None, use_cuda=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn fwfm_fit_multiclass_csr<'py>(
@@ -1265,6 +1283,7 @@ fn fwfm_fit_multiclass_csr<'py>(
     mut state: Option<FwfmMcStateArg<'py>>,
     mut adam_state: Option<FwfmMcAdamArg<'py>>,
     mut ftrl_state: Option<FwfmMcFtrlArg<'py>>,
+    use_cuda: bool,
 ) -> PyResult<()> {
     let opt = parse_optimizer(optimizer, beta_1, beta_2, epsilon, ftrl_beta)?;
     if batch_size == 0 {
@@ -1421,12 +1440,26 @@ fn fwfm_fit_multiclass_csr<'py>(
     let out = py.allow_threads(|| -> Result<(), String> {
         let csr = CsrView::new(indptr_s, indices_s, data_s, n_features)?;
         check_fit_args_mc(&csr, y_s, n_classes, sw_s, &ro_shape, ro)?;
-        fwfm::fit_multiclass_csr(
-            &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, r_s, st, rst,
-            n_classes, n_features, n_fields, k, opt, learning_rate,
-            l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing,
-            ro_shape[1], batch_size, ro,
-        );
+        if use_cuda {
+            #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+            cuda::fwfm_train::fit_multiclass_csr(
+                &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, r_s, st, rst,
+                n_classes, n_features, n_fields, k, opt, learning_rate,
+                l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing,
+                ro_shape[1], batch_size, ro,
+            )?;
+            #[cfg(not(all(feature = "cuda-backend", not(target_os = "macos"))))]
+            return Err(
+                "use_cuda requires modern_fm built with the cuda-backend feature".to_string()
+            );
+        } else {
+            fwfm::fit_multiclass_csr(
+                &csr, y_s, sw_s, field_ids_s, w0_s, w_s, v_s, r_s, st, rst,
+                n_classes, n_features, n_fields, k, opt, learning_rate,
+                l1_linear, l2_linear, l1_factors, l2_factors, label_smoothing,
+                ro_shape[1], batch_size, ro,
+            );
+        }
         Ok(())
     });
     out.map_err(val_err)
@@ -1513,11 +1546,56 @@ fn ffm_predict_cuda_csr<'py>(
         .into_pyarray(py))
 }
 
+/// FwFM CSR prediction on CUDA (docs/gpu_backend_plan.md milestone 6). Same
+/// input contract as fwfm_predict_csr; CSR structure, field_ids and R shape
+/// are validated on the CPU first, CUDA errors become RuntimeError.
+/// Registered only in cuda-backend builds; `_backend` guards calls with
+/// `has_cuda()`.
+#[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn fwfm_predict_cuda_csr<'py>(
+    py: Python<'py>,
+    indptr: PyReadonlyArray1<'py, i64>,
+    indices: PyReadonlyArray1<'py, i64>,
+    data: PyReadonlyArray1<'py, f64>,
+    n_features: usize,
+    field_ids: PyReadonlyArray1<'py, i64>,
+    w0: f64,
+    w: PyReadonlyArray1<'py, f64>,
+    v: PyReadonlyArray2<'py, f64>,
+    r: PyReadonlyArray2<'py, f64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let k = v.shape()[1];
+    let n_fields = r.shape()[0];
+    if r.shape()[1] != n_fields {
+        return Err(val_err(format!("R must be square, got {:?}", r.shape())));
+    }
+    let (indptr_s, indices_s, data_s) = (indptr.as_slice()?, indices.as_slice()?, data.as_slice()?);
+    let w_s = w.as_slice()?;
+    check_w_v_fm(n_features, w_s, v.shape())?;
+    let field_ids_s = field_ids.as_slice()?;
+    data::check_field_ids(field_ids_s, n_features, n_fields).map_err(val_err)?;
+    let v_s = v.as_slice()?;
+    let r_s = r.as_slice()?;
+    let out = py.allow_threads(|| -> Result<Vec<f64>, String> {
+        CsrView::new(indptr_s, indices_s, data_s, n_features)?;
+        cuda::fwfm::predict_csr(
+            indptr_s, indices_s, data_s, field_ids_s, w_s, v_s, r_s, w0, n_fields, k,
+        )
+    });
+    Ok(out
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?
+        .into_pyarray(py))
+}
+
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(has_cuda, m)?)?;
     #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
     m.add_function(wrap_pyfunction!(fm_predict_cuda_csr, m)?)?;
+    #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
+    m.add_function(wrap_pyfunction!(fwfm_predict_cuda_csr, m)?)?;
     #[cfg(all(feature = "cuda-backend", not(target_os = "macos")))]
     m.add_function(wrap_pyfunction!(ffm_predict_cuda_csr, m)?)?;
     m.add_function(wrap_pyfunction!(fm_predict_fast_dense, m)?)?;
