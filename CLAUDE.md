@@ -16,8 +16,10 @@ The Python API must feel like scikit-learn:
 Primary backend: Rust CPU via PyO3/maturin, efficient on sparse CSR.
 The pure-NumPy **reference implementations** in `python/modern_fm/_reference.py`
 are the ground truth for all backends — never change them for speed.
-Current state: v0.3.0 released; the v0.4 milestone (API completeness & online
-learning) has landed on `main` (not yet tagged). Rust kernels in `rust/` cover
+Current state: v0.4.0 (API completeness & online learning) is the released
+version; the v0.5 milestone (Rust early-stopping fast path, FwFM,
+bi-interaction pooling, CUDA backend plumbing) is in progress — see
+`docs/roadmap.md` and `docs/gpu_backend_plan.md`. Rust kernels in `rust/` cover
 FM/FFM prediction and training — FM binary (logistic/squared) + multiclass softmax
 and FFM binary (logistic/squared) + multiclass softmax, optimizers
 SGD/AdaGrad/Adam/FTRL, mini-batch (`batch_size`) and `rayon` row-parallelism

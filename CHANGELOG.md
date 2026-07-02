@@ -3,7 +3,7 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-07-02
 
 ### Added
 - **`FFMRegressor`**: squared-loss Field-aware Factorization Machine, the
