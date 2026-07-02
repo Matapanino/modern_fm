@@ -39,7 +39,6 @@ from .fm import (
     _check_sample_weight,
     _check_X,
     _combine_weights,
-    _predict_backend_guard,
     _resolve_n_jobs,
     _smooth,
     _validate_backend,
@@ -210,10 +209,11 @@ class _FFMBase(BaseEstimator, ModelIOMixin):
 
     def _ffm_raw_scores(self, X):
         """Validated raw FFM score (single parameter set, V_.ndim == 3)."""
-        _predict_backend_guard(self.backend, "FFM")
         check_is_fitted(self)
         X = _validate_X(self, X, reset=False)
-        return _backend.ffm_predict(X, self.field_ids_, self.w0_, self.w_, self.V_)
+        return _backend.ffm_predict(
+            X, self.field_ids_, self.w0_, self.w_, self.V_, backend=self.backend
+        )
 
     def _partial_field_ids(self, field_ids, n_features, first_call):
         """Set field_ids_/n_fields_ on the first partial_fit; on later calls reuse
@@ -537,19 +537,25 @@ class FFMClassifier(ClassifierMixin, _FFMBase):
         return self
 
     def decision_function(self, X):
-        _predict_backend_guard(self.backend, "FFM")
         check_is_fitted(self)
         X = _validate_X(self, X, reset=False)
         if self.V_.ndim == 4:  # multiclass: per-class FFM logits -> (n, n_classes)
             return np.column_stack(
                 [
                     _backend.ffm_predict(
-                        X, self.field_ids_, float(self.w0_[c]), self.w_[c], self.V_[c]
+                        X,
+                        self.field_ids_,
+                        float(self.w0_[c]),
+                        self.w_[c],
+                        self.V_[c],
+                        backend=self.backend,
                     )
                     for c in range(self.V_.shape[0])
                 ]
             )
-        return _backend.ffm_predict(X, self.field_ids_, self.w0_, self.w_, self.V_)
+        return _backend.ffm_predict(
+            X, self.field_ids_, self.w0_, self.w_, self.V_, backend=self.backend
+        )
 
     def predict_proba(self, X):
         scores = self.decision_function(X)

@@ -3,7 +3,14 @@ accepted with clear errors, never a silent CPU fallback. Kernel parity tests
 live separately and skip without a GPU; these run everywhere."""
 
 import pytest
-from modern_fm import FFMClassifier, FMClassifier, FMRegressor, FwFMClassifier, _backend
+from modern_fm import (
+    FFMClassifier,
+    FFMRegressor,
+    FMClassifier,
+    FMRegressor,
+    FwFMClassifier,
+    _backend,
+)
 
 
 def _xy(rng, n=20, d=5):
@@ -22,13 +29,15 @@ def test_import_never_requires_cuda():
     _backend.has_cuda()
 
 
-@pytest.mark.parametrize("cls", [FMClassifier, FMRegressor, FFMClassifier, FwFMClassifier])
+@pytest.mark.parametrize(
+    "cls", [FMClassifier, FMRegressor, FFMClassifier, FFMRegressor, FwFMClassifier]
+)
 def test_backend_cuda_errors_clearly(rng, cls):
     X, y = _xy(rng)
     model = cls(backend="cuda", max_iter=2)
     if _backend.has_cuda():
         # CUDA present: fitting names the exact unsupported surface
-        with pytest.raises(NotImplementedError, match="FM prediction only"):
+        with pytest.raises(NotImplementedError, match="FM/FFM prediction only"):
             model.fit(X, y)
     else:
         with pytest.raises(RuntimeError, match="cuda-backend"):
@@ -48,12 +57,27 @@ def test_fm_predict_cuda_requires_cuda(rng):
             m.decision_function(X)
 
 
-@pytest.mark.parametrize("cls", [FFMClassifier, FwFMClassifier])
-def test_ffm_fwfm_predict_cuda_not_implemented(rng, cls):
+@pytest.mark.parametrize("cls", [FFMClassifier, FFMRegressor])
+def test_ffm_predict_cuda_requires_cuda(rng, cls):
+    """FFM prediction has a CUDA kernel (gpu_backend_plan milestone 2); like FM,
+    it never falls back to CPU silently."""
     X, y = _xy(rng)
     m = cls(max_iter=3, random_state=0).fit(X, y)
     m.set_params(backend="cuda")
-    with pytest.raises(NotImplementedError, match="FM prediction only"):
+    score = m.decision_function if cls is FFMClassifier else m.predict
+    if _backend.has_cuda():
+        p = score(X)
+        assert p.shape == (X.shape[0],)
+    else:
+        with pytest.raises(RuntimeError, match="cuda-backend"):
+            score(X)
+
+
+def test_fwfm_predict_cuda_not_implemented(rng):
+    X, y = _xy(rng)
+    m = FwFMClassifier(max_iter=3, random_state=0).fit(X, y)
+    m.set_params(backend="cuda")
+    with pytest.raises(NotImplementedError, match="FM/FFM prediction only"):
         m.decision_function(X)
 
 

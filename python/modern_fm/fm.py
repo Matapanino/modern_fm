@@ -49,8 +49,8 @@ def _validate_backend(backend):
 
     "rust_cpu" is the (only complete) default. "cuda" (docs/gpu_backend_plan.md)
     requires a `cuda-backend` build plus an NVIDIA driver + device and
-    currently supports **FM prediction only**: fitting rejects it — fit with
-    "rust_cpu", then `set_params(backend="cuda")` for inference. There is
+    currently supports **FM/FFM prediction only**: fitting rejects it — fit
+    with "rust_cpu", then `set_params(backend="cuda")` for inference. There is
     deliberately no silent CPU fallback.
     """
     if backend not in ("rust_cpu", "cuda"):
@@ -63,17 +63,17 @@ def _validate_backend(backend):
                 "build/machine has neither (see docs/gpu_backend_plan.md)"
             )
         raise NotImplementedError(
-            "backend='cuda' supports FM prediction only: fit with "
+            "backend='cuda' supports FM/FFM prediction only: fit with "
             "backend='rust_cpu', then set_params(backend='cuda') for inference "
             "(docs/gpu_backend_plan.md tracks CUDA training)"
         )
 
 
 def _predict_backend_guard(backend, model):
-    """FFM/FwFM prediction has no CUDA kernel yet; never fall back silently."""
+    """FwFM prediction has no CUDA kernel yet; never fall back silently."""
     if backend == "cuda":
         raise NotImplementedError(
-            f"backend='cuda' supports FM prediction only; {model} prediction "
+            f"backend='cuda' supports FM/FFM prediction only; {model} prediction "
             "runs on backend='rust_cpu' (docs/gpu_backend_plan.md)"
         )
 

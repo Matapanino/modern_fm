@@ -91,8 +91,11 @@ The PR description gets:
 - `RuntimeError: ... requires modern_fm built with the cuda-backend ...` at
   predict time → the wheel in the venv was built without the feature; redo
   step 2 (a plain `pip install -e .` rebuild silently drops the flag).
-- NVRTC errors mention the kernel source: the kernel is compiled at first
-  call (`rust/src/cuda/fm.rs`), so a driver too old for the generated PTX
-  surfaces here.
-- The current scope is **FM CSR prediction only**; `fit(backend="cuda")` and
-  FFM/FwFM prediction intentionally raise `NotImplementedError`.
+- NVRTC errors mention the kernel source: all kernels are compiled together
+  into one module at the first CUDA call and cached process-wide
+  (`rust/src/cuda/mod.rs`), so a driver too old for the generated PTX
+  surfaces on that first call.
+- The current scope is **FM/FFM CSR prediction**; `fit(backend="cuda")` and
+  FwFM prediction intentionally raise `NotImplementedError`.
+- `colab exec` runs with `--timeout 7200`: the full FM grid (1M-row cells)
+  plus the FFM grid can exceed the old 3600 s ceiling under `--full-bench`.

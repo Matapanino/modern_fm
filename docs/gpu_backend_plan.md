@@ -14,8 +14,8 @@ mini-batch gradient accumulation. Do not attempt a complete GPU rewrite first.
 
 Recommended order:
 
-1. FM CSR prediction.
-2. FFM CSR prediction.
+1. FM CSR prediction. — **done (v0.5.0)**
+2. FFM CSR prediction. — **done (unreleased, v0.6 work)**
 3. FM binary/regression mini-batch gradient accumulation.
 4. FFM binary/regression mini-batch gradient accumulation.
 5. Later: optimizer flush, multiclass, early-stopping state handoff,
@@ -150,6 +150,11 @@ avoid repeated parameter and CSR transfers across epochs or repeated predict
 calls. The CUDA Best Practices Guide specifically warns that host/device
 transfers are costly and should be minimized; therefore the benchmark must show
 both transfer-inclusive and device-resident timings.
+
+Status: the context/module half of this is done — the device-0 context and the
+NVRTC-compiled module are created once per process and cached
+(`rust/src/cuda/mod.rs`). Model-parameter/CSR residency across calls is still
+open.
 
 ## Kernel Strategy
 

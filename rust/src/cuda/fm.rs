@@ -7,13 +7,14 @@
 //! the plan doc (coalescing/tiling only after profiling); tolerance-based
 //! parity vs the CPU paths (CUDA reduction order differs — rtol/atol 1e-10,
 //! see tests/test_cuda_parity.py). Transfer-inclusive: every call copies the
-//! CSR arrays and parameters to the device and the scores back.
+//! CSR arrays and parameters to the device and the scores back, but the
+//! context and compiled module are process-cached (see `super::gpu`).
 
-use cudarc::driver::{CudaContext, LaunchConfig, PushKernelArg};
-use cudarc::nvrtc::compile_ptx;
+use cudarc::driver::{LaunchConfig, PushKernelArg};
 
-/// NVRTC-compiled at first use; `long long` matches the i64 CSR arrays.
-const KERNEL_SRC: &str = r#"
+/// Compiled once per process into the shared module (`super::gpu`);
+/// `long long` matches the i64 CSR arrays.
+pub(super) const KERNEL_SRC: &str = r#"
 extern "C" __global__ void fm_predict_csr(
     const long long* indptr,
     const long long* indices,
@@ -76,9 +77,7 @@ pub fn predict_csr(
     fn e<E: std::fmt::Debug>(what: &'static str) -> impl Fn(E) -> String {
         move |err| format!("CUDA {what} failed: {err:?}")
     }
-    let ctx = CudaContext::new(0).map_err(e("context creation"))?;
-    let ptx = compile_ptx(KERNEL_SRC).map_err(|err| format!("NVRTC compile failed: {err:?}"))?;
-    let module = ctx.load_module(ptx).map_err(e("module load"))?;
+    let (ctx, module) = super::gpu()?;
     let func = module.load_function("fm_predict_csr").map_err(e("function load"))?;
     let stream = ctx.default_stream();
     let d_indptr = stream.clone_htod(indptr).map_err(e("indptr upload"))?;

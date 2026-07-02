@@ -60,7 +60,8 @@ echo ">> uploading working tree"
 colab upload -s "$SESSION" "$TARBALL" /content/modern_fm.tar.gz
 
 echo ">> building + validating on the GPU (rust build takes a few minutes)"
-MODERNFM_FULL_BENCH="$FULL_BENCH" colab exec -s "$SESSION" --timeout 3600 -f scripts/colab_remote_test.py
+# 7200s: the full FM grid (1M-row cells) plus the FFM grid can exceed 3600s.
+MODERNFM_FULL_BENCH="$FULL_BENCH" colab exec -s "$SESSION" --timeout 7200 -f scripts/colab_remote_test.py
 
 echo ">> downloading report -> $REPORT_OUT"
 colab download -s "$SESSION" /content/modernfm_gpu_report.md "$REPORT_OUT"
