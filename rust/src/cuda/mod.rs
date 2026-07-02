@@ -27,9 +27,19 @@ pub mod fwfm_train;
 
 /// True when a CUDA driver can be loaded and at least one device exists.
 /// Every failure mode (no libcuda, no device, init error) reports
-/// unavailable rather than erroring. Uses `device_count()`, which does not
-/// create a context — probing stays cheap and never warms the cache.
+/// unavailable rather than erroring. cudarc resolves the driver via dlopen
+/// (`dynamic-loading`) and **panics** on any driver call when libcuda is
+/// absent, so the library itself is probed first — `is_culib_present`
+/// attempts the load and reports instead of panicking. This is what keeps
+/// `has_cuda()` a plain `false` on CUDA-less machines (the published Linux
+/// wheels ship this feature; release.yml's `linux-wheel-check` pins the
+/// behavior). `device_count()` does not create a context — probing stays
+/// cheap and never warms the cache.
 pub fn available() -> bool {
+    // Safety: only dlopens/closes candidate driver libraries; no CUDA state.
+    if !unsafe { cudarc::driver::sys::is_culib_present() } {
+        return false;
+    }
     matches!(cudarc::driver::CudaContext::device_count(), Ok(n) if n > 0)
 }
 
