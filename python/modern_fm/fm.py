@@ -29,7 +29,12 @@ from sklearn.utils.validation import check_consistent_length, column_or_1d, vali
 
 from . import _backend, _inspect
 from ._base import ModelIOMixin, check_is_fitted
-from ._early_stop import normalize_eval_set, run_epochs, split_indices
+from ._early_stop import (
+    classification_eval_set,
+    normalize_eval_set,
+    run_epochs,
+    split_indices,
+)
 from ._partial import make_opt_state, partial_fit_classes, warm_resume
 from ._reference_train import (
     OPTIMIZERS,
@@ -486,7 +491,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
             if self.early_stopping or eval_set is not None:
                 eval_val = None
                 if eval_set is not None:
-                    Xv, yv = normalize_eval_set(eval_set)
+                    Xv, yv = classification_eval_set(eval_set, self.classes_)
                     eval_val = (
                         _check_X(Xv, X.shape[1]),
                         np.searchsorted(self.classes_, np.asarray(yv)),
@@ -499,7 +504,7 @@ class FMClassifier(ClassifierMixin, _FMBase):
         if self.early_stopping or eval_set is not None:
             eval_val = None
             if eval_set is not None:
-                Xv, yv = normalize_eval_set(eval_set)
+                Xv, yv = classification_eval_set(eval_set, self.classes_)
                 eval_val = (_check_X(Xv, X.shape[1]), (yv == self.classes_[1]).astype(np.float64))
             return self._fit_es(X, y_train, y01, "logistic", sw, eval_val)
         return self._fit_core(X, y_train, "logistic", sample_weight=sw)

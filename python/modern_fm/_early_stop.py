@@ -9,6 +9,8 @@ improvement. Best weights are always restored.
 from __future__ import annotations
 
 import numpy as np
+from sklearn.utils.multiclass import check_classification_targets
+from sklearn.utils.validation import check_consistent_length, column_or_1d
 
 
 def split_indices(n_rows, validation_fraction, rng):
@@ -30,6 +32,20 @@ def normalize_eval_set(eval_set):
     except (TypeError, ValueError) as exc:
         raise ValueError("eval_set must be (X_val, y_val) or a list of such tuples") from exc
     return X_val, np.asarray(y_val)
+
+
+def classification_eval_set(eval_set, classes):
+    """Validate evaluation targets before binary/softmax encoding (2026-09-05, WP6)."""
+    X_val, y_val = normalize_eval_set(eval_set)
+    y_val = column_or_1d(y_val, warn=True)
+    check_consistent_length(X_val, y_val)
+    check_classification_targets(y_val)
+    if not np.isin(y_val, classes).all():
+        raise ValueError(
+            "eval_set contains unknown class labels not present in training y "
+            f"(classes_={classes.tolist()})"
+        )
+    return X_val, y_val
 
 
 def run_epochs(max_iter, patience, min_delta, train_epoch, evaluate, snapshot):

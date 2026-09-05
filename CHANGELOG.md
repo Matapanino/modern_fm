@@ -3,6 +3,12 @@
 All notable changes to `modern_fm` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Reject unknown evaluation classes consistently in FM, FFM and FwFM before
+  binary/softmax encoding; validate evaluation target shape and row counts.
+- Document whole-pipeline nesting and coordinate alignment for pooling features.
+
 ## [1.1.1] - 2026-07-02
 
 ### Fixed

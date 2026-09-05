@@ -144,6 +144,12 @@ pipe = make_pipeline(
   `model.bi_interaction(X)` (deliberately **not** named `transform`, so plain
   FMs keep plain-estimator semantics in sklearn tooling).
 
+Pooling is supervised: evaluate the **whole fitted pipeline** inside each outer
+CV split, including any inner tuning. Never fit the FM on scoring labels.
+Do not concatenate OOF pooling coordinates from independently fitted inner FMs:
+their latent coordinates are not aligned. For stacking, use scalar predictions
+from a complete fold-local model, or nest the complete pooling-plus-head pipeline.
+
 ## CategoricalEncoder & libffm I/O
 
 ```python
